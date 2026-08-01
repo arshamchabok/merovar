@@ -576,6 +576,97 @@ frame.addEventListener("load", async () => {
     await sleep(200);
     check("releasing on the target closes the shape",
       api.getAllKingdoms().length === shakyCount + 1 && !doc.querySelector(".snap-target"));
+    // --- precision: does the border follow what was drawn? --------------------
+    doc.getElementById("fitButton").click();
+    await sleep(120);
+
+    // A deliberately detailed outline: a coastline-like wiggle, not a blob.
+    const detailed = Array.from({ length: 220 }, (_, i) => {
+      const a = (i / 220) * Math.PI * 2;
+      const r = 150 + Math.sin(a * 7) * 34 + Math.sin(a * 13) * 16;
+      return [500 + Math.cos(a) * r, 400 + Math.sin(a) * r * 0.8];
+    });
+
+    // Worst-case gap, in screen px, between the drawn path and the stored border.
+    const strayFromDrawn = (kingdom, path, worldScale) => {
+      const ring = kingdom.geometry.points;
+      let worst = 0;
+      for (const [sx, sy] of path) {
+        const map = { x: (sx - worldScale.ox) / worldScale.s, y: (sy - worldScale.oy) / worldScale.s };
+        let best = Infinity;
+        for (let i = 0; i < ring.length; i += 1) {
+          const a = ring[i], b = ring[(i + 1) % ring.length];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const len2 = dx * dx + dy * dy;
+          const t = len2 ? Math.max(0, Math.min(1, ((map.x - a.x) * dx + (map.y - a.y) * dy) / len2)) : 0;
+          best = Math.min(best, Math.hypot(map.x - (a.x + dx * t), map.y - (a.y + dy * t)));
+        }
+        worst = Math.max(worst, best);
+      }
+      return worst * worldScale.s; // back to screen px
+    };
+    const readWorld = () => {
+      const m = /translate\(([-\d.]+)px,\s*([-\d.]+)px\) scale\(([\d.]+)\)/
+        .exec(doc.getElementById("world").style.transform);
+      return { ox: Number(m[1]), oy: Number(m[2]), s: Number(m[3]) };
+    };
+
+    const measureDetail = async (value) => {
+      doc.getElementById("drawDetail").value = value;
+      doc.querySelector('.tool[data-mode="draw"]').click();
+      drawClosed(win, viewport, detailed);
+      await sleep(250);
+      const made = api.getAllKingdoms().at(-1);
+      const stray = strayFromDrawn(made, detailed, readWorld());
+      api.selectKingdom(made.id);
+      doc.getElementById("deleteButton").click();
+      await sleep(150);
+      return { points: made.geometry.pointCount, stray };
+    };
+
+    const rough = await measureDetail("7");
+    const fine = await measureDetail("2.2");
+    const exact = await measureDetail("1");
+
+    check("Fine keeps far more of the drawn shape than Rough",
+      fine.points > rough.points * 1.5,
+      `rough ${rough.points} pts / fine ${fine.points} pts`);
+    check("Exact keeps the most detail", exact.points >= fine.points,
+      `exact ${exact.points} pts`);
+    check("Fine border stays within a few px of what was drawn",
+      fine.stray < 6, `${fine.stray.toFixed(2)}px worst gap`);
+    check("Exact border hugs the drawn path", exact.stray < 4,
+      `${exact.stray.toFixed(2)}px worst gap`);
+    check("Rough is measurably looser than Fine", rough.stray > fine.stray,
+      `rough ${rough.stray.toFixed(2)}px vs fine ${fine.stray.toFixed(2)}px`);
+    check("detail setting does not explode the point count",
+      exact.points <= 400, `${exact.points} points`);
+
+    // Simplify is the way back if a border ends up over-detailed.
+    doc.getElementById("drawDetail").value = "1";
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    drawClosed(win, viewport, detailed);
+    await sleep(250);
+    const dense = api.getAllKingdoms().at(-1);
+    api.selectKingdom(dense.id);
+    await sleep(100);
+    doc.getElementById("simplifyButton").click();
+    await sleep(200);
+    check("Simplify outline reduces the point count",
+      api.getKingdomById(dense.id).geometry.pointCount < dense.geometry.pointCount,
+      `${dense.geometry.pointCount} -> ${api.getKingdomById(dense.id).geometry.pointCount}`);
+    check("Simplify is undoable", (() => {
+      doc.getElementById("undoButton").click();
+      return true;
+    })());
+    await sleep(150);
+    check("Simplify undo restores the points",
+      api.getKingdomById(dense.id)?.geometry.pointCount === dense.geometry.pointCount);
+    api.selectKingdom(dense.id);
+    doc.getElementById("deleteButton").click();
+    await sleep(150);
+    doc.getElementById("drawDetail").value = "2.2";
+
     // --- placing settlements --------------------------------------------------
     doc.getElementById("fitButton").click();
     await sleep(120);

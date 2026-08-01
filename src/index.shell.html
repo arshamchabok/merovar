@@ -282,6 +282,15 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   <button class="tool" data-mode="addpoint" type="button">Add Point</button>
   <button class="tool" data-mode="delpoint" type="button">Delete Point</button>
   <div class="separator"></div>
+  <label class="control">Detail
+    <select id="drawDetail" title="How closely a drawn border follows your hand">
+      <option value="7">Rough</option>
+      <option value="4">Normal</option>
+      <option value="2.2" selected>Fine</option>
+      <option value="1">Exact</option>
+    </select>
+  </label>
+  <div class="separator"></div>
   <button id="finishButton" class="tool primary" type="button" disabled>Finish</button>
   <button id="cancelButton" class="tool" type="button" disabled>Cancel</button>
   <div class="separator"></div>
@@ -386,6 +395,9 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   <label class="field">Absorb another kingdom
     <select id="mergeKingdom"><option value="">Choose a kingdom…</option></select>
   </label>
+  <div class="inspector-actions">
+    <button id="simplifyButton" class="tool" type="button" title="Reduce the number of border points">Simplify outline</button>
+  </div>
   <div class="inspector-actions">
     <button id="duplicateButton" class="tool" type="button">Duplicate</button>
     <button id="deleteButton" class="tool danger" type="button">Delete</button>
@@ -493,6 +505,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     deleteKingdomButton: document.getElementById("deleteKingdomButton"),
     showBorders: document.getElementById("showBorders"),
     showNames: document.getElementById("showNames"),
+    drawDetail: document.getElementById("drawDetail"),
     modeLabel: document.getElementById("modeLabel"),
     countLabel: document.getElementById("countLabel"),
     saveState: document.getElementById("saveState"),
@@ -611,10 +624,11 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     const out = [];
     bezierRing(points).forEach(segment => {
       const length = Math.hypot(segment.p2.x - segment.p1.x, segment.p2.y - segment.p1.y) || 1;
-      const steps = clamp(Math.round(length / 40), 3, 24);
-      // Low floor: a freehand outline has many short segments and already
-      // carries the hand's own character — it must not be squiggled further.
-      const amp = clamp(length * 0.022, 2.5, 24) * amplitudeScale;
+      const steps = clamp(Math.round(length / 40), 2, 24);
+      // Strictly proportional, with no floor: long edges of a rough shape get
+      // pen character, while the short edges of a carefully traced coastline
+      // stay on the line that was actually drawn.
+      const amp = Math.min(length * 0.05, 22) * amplitudeScale;
 
       let wander = 0;
       for (let step = 0; step < steps; step += 1) {
@@ -745,12 +759,22 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     return points.filter((_, i) => keep[i]);
   }
 
-  // Keeps handle counts sane no matter how slowly the outline was drawn.
+  // How far, in screen pixels, the stored outline may stray from what was
+  // drawn. Lower keeps more of your hand; this is the precision dial.
+  const detailPx = () => Number(dom.drawDetail?.value) || 2.2;
+  // Tolerance is a screen distance, so drawing zoomed in genuinely captures
+  // finer geography rather than just bigger numbers.
+  const detailTolerance = () => detailPx() / scale;
+  const sampleSpacing = () => Math.max(1.1, detailPx() * 0.8) / scale;
+  const smoothingPasses = () => (detailPx() >= 7 ? 2 : detailPx() >= 2 ? 1 : 0);
+
+  // Simplify only as far as the detail setting allows, with a high ceiling so a
+  // carefully traced coastline keeps its shape instead of being straightened.
   function simplifyStroke(points) {
-    let tolerance = 10 / scale;
+    let tolerance = detailTolerance();
     let result = simplifyPath(points, tolerance);
-    while (result.length > 120 && tolerance < 400) {
-      tolerance *= 1.6;
+    while (result.length > 400 && tolerance < 400) {
+      tolerance *= 1.5;
       result = simplifyPath(points, tolerance);
     }
     return result;
@@ -1038,7 +1062,11 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       unders.push(smoothClosedPath(roughenPolygon(part, seed + offset + 977, 1.4)));
     });
     // The name belongs on the biggest landmass, not in the sea between parts.
-    const anchor = labelAnchor(largestPart(kingdom));
+    // The anchor search is O(grid x edges), so run it on a coarse copy of a
+    // detailed ring — it only needs to land somewhere roomy.
+    const biggest = largestPart(kingdom);
+    const anchorRing = biggest.length > 60 ? simplifyPath(biggest, 22) : biggest;
+    const anchor = labelAnchor(anchorRing.length >= 3 ? anchorRing : biggest);
     const entry = {
       signature,
       main: mains.join(" "),
@@ -1151,7 +1179,9 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     if (mode === "move" || !selectedId) return;
     const kingdom = byId(selectedId);
     if (!kingdom || kingdom.hidden) return;
-    const radius = handleRadius();
+    // A finely traced border can carry hundreds of points; shrink the handles
+    // so they stay grabbable without burying the outline.
+    const radius = handleRadius() * clamp(Math.sqrt(36 / Math.max(totalPoints(kingdom), 1)), 0.45, 1);
 
     kingdom.parts.forEach((part, partIndex) => {
       if (mode === "edit" || mode === "addpoint") {
@@ -1630,7 +1660,9 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     let drawn = draftPath();
     if (drawn.length > 2) {
       drawn = trimToStart(drawn, snapRadius());
-      drawn = smoothStroke(dedupePoints(drawn, 1.5 / scale), 2);
+      drawn = dedupePoints(drawn, 0.6 / scale);
+      const passes = smoothingPasses();
+      if (passes) drawn = smoothStroke(drawn, passes);
       drawn = simplifyStroke(drawn);
     }
     return drawn.length >= 3 ? removeSelfIntersections(drawn) : drawn;
@@ -1811,8 +1843,9 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       pointerMoved = true;
       const point = toMap(event.clientX, event.clientY);
       const last = activeSegment[activeSegment.length - 1];
-      // Sample every few screen pixels rather than every event.
-      if (Math.hypot(point.x - last.x, point.y - last.y) > 3.5 / scale) {
+      // Sampling has to be finer than the detail setting or precision is lost
+      // before simplification ever runs.
+      if (Math.hypot(point.x - last.x, point.y - last.y) > sampleSpacing()) {
         activeSegment.push(point);
         renderDraft();
       }
@@ -2326,6 +2359,26 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     openInspector();
   }
 
+  // Escape hatch for an outline captured in more detail than it needs.
+  function simplifyKingdom() {
+    const kingdom = byId(selectedId);
+    if (!kingdom) return;
+    const before = totalPoints(kingdom);
+    const tolerance = Math.max(detailTolerance() * 2.5, 6 / scale);
+    const reduced = kingdom.parts.map(part => {
+      const next = simplifyPath(part, tolerance);
+      return next.length >= 3 ? next : part;
+    });
+    if (reduced.every((part, i) => part.length === kingdom.parts[i].length)) {
+      setStatus("Already as simple as it gets at this zoom");
+      return;
+    }
+    pushUndo();
+    kingdom.parts = reduced;
+    pathCache.delete(kingdom.id);
+    afterChange(`Simplified ${before} → ${totalPoints(kingdom)} points`);
+  }
+
   function duplicateKingdom() {
     const kingdom = byId(selectedId);
     if (!kingdom) return;
@@ -2438,6 +2491,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   dom.undoButton.addEventListener("click", undo);
   dom.redoButton.addEventListener("click", redo);
   dom.deleteKingdomButton.addEventListener("click", deleteKingdom);
+  document.getElementById("simplifyButton").addEventListener("click", simplifyKingdom);
   document.getElementById("duplicateButton").addEventListener("click", duplicateKingdom);
   document.getElementById("deleteButton").addEventListener("click", deleteKingdom);
   document.getElementById("closeInspectorButton").addEventListener("click", deselect);
