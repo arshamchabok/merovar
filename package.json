@@ -1,0 +1,11 @@
+{
+  "name": "merovar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Merovar — Illustrated Settlement Editor",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "start": "node scripts/dev-server.mjs"
+  }
+}
