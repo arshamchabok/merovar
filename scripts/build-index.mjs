@@ -34,7 +34,12 @@ const kingdomData = lineContaining(current, 'id="embeddedKingdomData"', 'kingdom
 
 // Fail before writing rather than emit a broken 19 MB file.
 const icons = jsonOf(iconLibrary);
-const settlements = jsonOf(settlementData);
+// Either the original bare array, or the {savedAt, settlements} form written by
+// "Save Edited HTML" once settlements became editable.
+const settlementPayload = jsonOf(settlementData);
+const settlements = Array.isArray(settlementPayload)
+  ? settlementPayload
+  : settlementPayload.settlements;
 if (!icons.town || !icons.city || !icons.castle) throw new Error('icon library is incomplete');
 if (!Array.isArray(settlements) || settlements.length === 0) throw new Error('no settlement records');
 if (!mapImg.includes('src="data:image/png;base64,')) throw new Error('map image is not inline');

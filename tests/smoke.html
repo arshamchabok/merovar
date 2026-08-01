@@ -576,6 +576,111 @@ frame.addEventListener("load", async () => {
     await sleep(200);
     check("releasing on the target closes the shape",
       api.getAllKingdoms().length === shakyCount + 1 && !doc.querySelector(".snap-target"));
+    // --- placing settlements --------------------------------------------------
+    doc.getElementById("fitButton").click();
+    await sleep(120);
+    const beforePlace = win.MerovarMapAPI.getSettlements().length;
+    doc.querySelector('.tool[data-mode="settlement"]').click();
+    check("settlement palette opens", !doc.getElementById("palette").classList.contains("hidden"));
+
+    // Every thumbnail must come from the icons already embedded in the file.
+    const libraryIcons = new Set();
+    ["town", "city", "castle"].forEach(type => {
+      doc.querySelector(`#palette .type-tab[data-type="${type}"]`).click();
+      doc.querySelectorAll("#designGrid img").forEach(img => libraryIcons.add(img.src));
+    });
+    const embeddedIcons = new Set();
+    Object.values(JSON.parse(doc.getElementById("iconLibraryData").textContent))
+      .forEach(set => set.forEach(icon => embeddedIcons.add(icon.src)));
+    check("palette offers exactly the nine embedded icons",
+      libraryIcons.size === 9 && [...libraryIcons].every(src => embeddedIcons.has(src)),
+      `${libraryIcons.size} thumbnails`);
+
+    doc.querySelector('#palette .type-tab[data-type="castle"]').click();
+    doc.querySelectorAll("#designGrid .design-option")[1].click();
+    clickAt(win, viewport, 520, 430);
+    await sleep(150);
+    const placed = win.MerovarMapAPI.getSettlements();
+    check("clicking the map places a settlement", placed.length === beforePlace + 1,
+      `${beforePlace} -> ${placed.length}`);
+    const fresh = placed.at(-1);
+    check("placed with the chosen type and design",
+      fresh.type === "castle" && fresh.design === 2, `${fresh.type} design ${fresh.design}`);
+    check("placed inside map coordinates",
+      fresh.coordinates.x >= 0 && fresh.coordinates.x <= 3840 &&
+      fresh.coordinates.y >= 0 && fresh.coordinates.y <= 1645,
+      `${Math.round(fresh.coordinates.x)}, ${Math.round(fresh.coordinates.y)}`);
+    check("size matches the existing artwork range",
+      fresh.appearance.width >= 28 && fresh.appearance.width <= 90,
+      `${fresh.appearance.width}px`);
+    const freshEl = doc.querySelector(`[data-settlement-id="${fresh.id}"]`);
+    check("new settlement uses an embedded icon",
+      embeddedIcons.has(freshEl.querySelector("img").src));
+    const originalTransform = doc.querySelector(".settlement").style.transform;
+    check("new settlement anchored like the originals",
+      freshEl.dataset.mapAnchor === "bottom-center" &&
+      freshEl.style.transform.replace(/\s+/g, "") === originalTransform.replace(/\s+/g, ""),
+      `${freshEl.style.transform} vs ${originalTransform}`);
+    check("new settlement sits above the kingdom layer",
+      doc.getElementById("settlementLayer").contains(freshEl));
+
+    // Moving and editing.
+    const iconBox = freshEl.getBoundingClientRect();
+    strokeAlong(win, viewport, [
+      [iconBox.left + iconBox.width / 2, iconBox.bottom - 2],
+      [iconBox.left + iconBox.width / 2 + 60, iconBox.bottom + 30],
+      [iconBox.left + iconBox.width / 2 + 90, iconBox.bottom + 45],
+    ]);
+    await sleep(150);
+    const moved = win.MerovarMapAPI.getSettlement(fresh.id);
+    check("dragging moves the settlement",
+      Math.abs(moved.coordinates.x - fresh.coordinates.x) > 20, "moved");
+    check("no extra settlement created by the drag",
+      win.MerovarMapAPI.getSettlements().length === beforePlace + 1);
+
+    doc.getElementById("sWidth").value = "70";
+    doc.getElementById("sWidth").dispatchEvent(new win.Event("input", { bubbles: true }));
+    await sleep(120);
+    check("width is editable", win.MerovarMapAPI.getSettlement(fresh.id).appearance.width === 70);
+
+    doc.getElementById("sType").value = "city";
+    doc.getElementById("sType").dispatchEvent(new win.Event("change", { bubbles: true }));
+    await sleep(120);
+    const retyped = win.MerovarMapAPI.getSettlement(fresh.id);
+    check("type is switchable", retyped.type === "city");
+    check("switched icon still comes from the library",
+      embeddedIcons.has(doc.querySelector(`[data-settlement-id="${fresh.id}"] img`).src));
+
+    check("settlement manifest counts the new one",
+      JSON.parse(doc.getElementById("merovarSettlementManifest").textContent)
+        .settlements.length === beforePlace + 1);
+    check("capital dropdown includes the new settlement",
+      [...doc.getElementById("editCapital").options].some(o => o.value === fresh.id));
+
+    // Undo must cover settlements, not just kingdoms.
+    doc.getElementById("undoButton").click();
+    await sleep(150);
+    check("undo reverts a settlement edit",
+      win.MerovarMapAPI.getSettlement(fresh.id)?.type === "castle",
+      win.MerovarMapAPI.getSettlement(fresh.id)?.type);
+
+    // Autosave is debounced, so give it time to flush.
+    await sleep(900);
+    const saved = JSON.parse(win.localStorage.getItem("merovar-settlements-v2") || "null");
+    check("settlements autosave to storage",
+      !!saved && Array.isArray(saved.settlements) && saved.settlements.length === beforePlace + 1,
+      `${saved?.settlements?.length} stored`);
+    check("autosave keeps the original 94 too",
+      saved.settlements.filter(s => s.id.startsWith("city-17") || s.id.startsWith("town-17") ||
+        s.id.startsWith("castle-17")).length >= 90, `${saved.settlements.length} total`);
+
+    doc.getElementById("sDelete").click();
+    await sleep(150);
+    check("delete removes it", win.MerovarMapAPI.getSettlements().length === beforePlace,
+      `${win.MerovarMapAPI.getSettlements().length}`);
+    check("the original 94 are untouched",
+      win.MerovarMapAPI.getSettlements().length === 94);
+
     // --- legacy single-ring data still loads ----------------------------------
     // Runs last: importing replaces every kingdom.
     const legacy = JSON.stringify({

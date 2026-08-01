@@ -73,6 +73,13 @@ button { color:inherit; }
   opacity:.985;
 }
 body.locked-settlements .settlement { pointer-events:none; }
+.settlement.selected {
+  outline:3px dashed rgba(255,239,183,.88); outline-offset:5px; border-radius:6px;
+}
+.settlement.selected img {
+  filter:drop-shadow(0 0 8px rgba(255,239,183,.92)) drop-shadow(0 2px 1.5px rgba(55,35,19,.30));
+}
+body.mode-settlement .settlement { cursor:grab; }
 
 /* --------------------------------------------------------- kingdom artwork */
 .kingdom-fill {
@@ -178,14 +185,46 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   color:var(--muted); font-size:12px; white-space:nowrap;
 }
 
-#inspector {
+#palette {
+  position:fixed; z-index:48; left:12px; top:66px; width:292px;
+  padding:12px; border:1px solid var(--border); border-radius:12px;
+  background:var(--panel2); box-shadow:0 16px 44px rgba(0,0,0,.38); backdrop-filter:blur(12px);
+}
+#palette.hidden { display:none; }
+#palette h2 { margin:0 0 8px; font-size:17px; }
+.type-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+.type-tab {
+  padding:7px 5px; border:1px solid var(--border); border-radius:7px;
+  background:rgba(255,255,255,.05); cursor:pointer;
+}
+.type-tab.active { background:rgba(212,168,95,.22); border-color:rgba(255,235,202,.55); }
+#designGrid { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-top:9px; }
+.design-option {
+  position:relative; height:82px; padding:4px; display:grid; place-items:center;
+  border:1px solid rgba(255,235,202,.18); border-radius:8px;
+  background:rgba(255,255,255,.045); cursor:pointer;
+}
+.design-option:hover { background:rgba(255,255,255,.09); }
+.design-option.active { border-color:#f4d598; box-shadow:inset 0 0 0 1px rgba(244,213,152,.45); }
+.design-option img { max-width:100%; max-height:70px; object-fit:contain; pointer-events:none; }
+.design-number { position:absolute; right:4px; bottom:3px; font-size:10px; color:var(--muted); }
+.palette-help { margin:9px 0 0; color:var(--muted); font-size:12px; line-height:1.38; }
+.design-mini-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+.design-mini {
+  height:62px; padding:3px; display:grid; place-items:center; border:1px solid var(--border);
+  border-radius:7px; background:rgba(255,255,255,.04); cursor:pointer;
+}
+.design-mini.active { border-color:#f4d598; background:rgba(212,168,95,.18); }
+.design-mini img { max-width:100%; max-height:54px; object-fit:contain; pointer-events:none; }
+
+#inspector, #settlementInspector {
   position:fixed; z-index:55; right:12px; top:66px; width:min(340px,calc(100vw - 24px));
   max-height:calc(100vh - 150px); overflow-y:auto;
   padding:14px; border:1px solid var(--border); border-radius:12px;
   background:var(--panel2); box-shadow:0 18px 50px rgba(0,0,0,.45); backdrop-filter:blur(14px);
 }
-#inspector.hidden { display:none; }
-#inspector h2 { margin:0 0 2px; font-size:18px; }
+#inspector.hidden, #settlementInspector.hidden { display:none; }
+#inspector h2, #settlementInspector h2 { margin:0 0 2px; font-size:18px; }
 .inspector-sub { margin:0 0 6px; color:var(--muted); font-size:12px; }
 .field { display:grid; gap:5px; margin-top:9px; color:var(--muted); font-size:12px; }
 .field input,.field textarea,.field select {
@@ -236,6 +275,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
 <nav id="toolbar" aria-label="Kingdom border editor controls">
   <button class="tool active" data-mode="move" type="button">Move Map</button>
+  <button class="tool" data-mode="settlement" type="button" title="Place towns, cities and castles using the existing artwork">Add Settlement</button>
   <button class="tool" data-mode="draw" type="button" title="Press and drag to draw an outline; let go to close it">Draw Kingdom</button>
   <button class="tool" data-mode="island" type="button" title="Draw another landmass belonging to the selected kingdom">Add Island</button>
   <button class="tool" data-mode="edit" type="button">Select / Edit Border</button>
@@ -289,6 +329,44 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   </div>
 </main>
 
+<aside id="palette" class="hidden" aria-label="Settlement artwork">
+  <h2>Settlement artwork</h2>
+  <div class="type-tabs">
+    <button class="type-tab active" data-type="town" type="button">Town</button>
+    <button class="type-tab" data-type="city" type="button">City</button>
+    <button class="type-tab" data-type="castle" type="button">Castle</button>
+  </div>
+  <div id="designGrid"></div>
+  <label class="field">Size <span id="newSizeValue"></span>
+    <input id="newSize" type="range" min="28" max="90" step="1">
+  </label>
+  <p class="palette-help">Click the map to place. Click a settlement to select it, drag to move it.</p>
+</aside>
+
+<section id="settlementInspector" class="hidden" aria-label="Settlement properties">
+  <h2 id="settlementTitle">Settlement</h2>
+  <p class="inspector-sub" id="settlementMeta"></p>
+  <label class="field">Name<input id="sName" type="text" maxlength="80" placeholder="Optional name"></label>
+  <label class="field">Type
+    <select id="sType">
+      <option value="town">Town</option>
+      <option value="city">City</option>
+      <option value="castle">Castle</option>
+    </select>
+  </label>
+  <div class="field">Design<div id="sDesignGrid" class="design-mini-grid"></div></div>
+  <div class="inline-fields">
+    <label class="field">Width<input id="sWidth" type="number" min="20" max="200" step="1"></label>
+    <label class="field">Rotation<input id="sRotation" type="number" min="-180" max="180" step="1"></label>
+  </div>
+  <label class="field">Notes<textarea id="sNotes" placeholder="Optional notes"></textarea></label>
+  <div class="inspector-actions">
+    <button id="sDuplicate" class="tool" type="button">Duplicate</button>
+    <button id="sDelete" class="tool danger" type="button">Delete</button>
+    <button id="sClose" class="tool" type="button">Close</button>
+  </div>
+</section>
+
 <section id="inspector" class="hidden" aria-label="Kingdom properties">
   <h2 id="inspectorTitle">Kingdom</h2>
   <p class="inspector-sub" id="inspectorMeta"></p>
@@ -338,6 +416,10 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   const MIN_SCALE = 0.08;
   const MAX_SCALE = 8;
   const KINGDOM_STORAGE_KEY = "merovar-kingdom-borders-v1";
+  const SETTLEMENT_STORAGE_KEY = "merovar-settlements-v2";
+
+  // Typical size of the settlements already on the map, so new ones match.
+  const DEFAULT_WIDTH = { town: 46, city: 55, castle: 42 };
 
   // On-screen sizes (CSS px) that stay constant regardless of zoom.
   const INK_SCREEN_PX = 1.7;
@@ -352,7 +434,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     `${prefix}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
 
   const iconLibrary = JSON.parse(document.getElementById("iconLibraryData").textContent);
-  const settlements = JSON.parse(document.getElementById("embeddedSettlementData").textContent || "[]");
+  let settlements = [];
 
   // Muted ink/wash pairs; new kingdoms cycle through them.
   const PALETTE = [
@@ -379,6 +461,19 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     settlementLayer: document.getElementById("settlementLayer"),
     settlementManifest: document.getElementById("merovarSettlementManifest"),
     kingdomManifest: document.getElementById("merovarKingdomManifest"),
+    palette: document.getElementById("palette"),
+    designGrid: document.getElementById("designGrid"),
+    newSize: document.getElementById("newSize"),
+    newSizeValue: document.getElementById("newSizeValue"),
+    settlementInspector: document.getElementById("settlementInspector"),
+    settlementTitle: document.getElementById("settlementTitle"),
+    settlementMeta: document.getElementById("settlementMeta"),
+    sName: document.getElementById("sName"),
+    sType: document.getElementById("sType"),
+    sDesignGrid: document.getElementById("sDesignGrid"),
+    sWidth: document.getElementById("sWidth"),
+    sRotation: document.getElementById("sRotation"),
+    sNotes: document.getElementById("sNotes"),
     inspector: document.getElementById("inspector"),
     inspectorTitle: document.getElementById("inspectorTitle"),
     inspectorMeta: document.getElementById("inspectorMeta"),
@@ -791,6 +886,48 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     };
   }
 
+  function normaliseSettlement(raw, index) {
+    const type = iconLibrary[raw.type] ? raw.type : "town";
+    const design = [1, 2, 3].includes(Number(raw.design)) ? Number(raw.design) : 1;
+    return {
+      id: typeof raw.id === "string" && raw.id ? raw.id : `${type}-${Date.now().toString(36)}-${index}`,
+      type,
+      design,
+      x: clamp(Number(raw.x) || 0, 0, MAP_WIDTH),
+      y: clamp(Number(raw.y) || 0, 0, MAP_HEIGHT),
+      width: clamp(Number(raw.width) || DEFAULT_WIDTH[type], 20, 200),
+      rotation: Number(raw.rotation) || 0,
+      opacity: Number(raw.opacity ?? 1),
+      name: typeof raw.name === "string" ? raw.name : "",
+      notes: typeof raw.notes === "string" ? raw.notes : "",
+    };
+  }
+
+  // Same rule as kingdoms: a freshly exported HTML beats an older autosave.
+  function readStored(key, embeddedNode, listKey) {
+    let embedded = { savedAt: 0, list: [] };
+    try {
+      const parsed = JSON.parse(document.getElementById(embeddedNode)?.textContent || "[]");
+      if (Array.isArray(parsed)) embedded = { savedAt: 0, list: parsed };
+      else if (Array.isArray(parsed[listKey])) {
+        embedded = { savedAt: Number(parsed.savedAt) || 0, list: parsed[listKey] };
+      }
+    } catch (error) { /* fall through to defaults */ }
+
+    let stored = null;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key) || "null");
+      if (parsed && Array.isArray(parsed[listKey])) stored = parsed;
+    } catch (error) { stored = null; }
+
+    return stored && Number(stored.savedAt) >= embedded.savedAt ? stored[listKey] : embedded.list;
+  }
+
+  function loadSettlements() {
+    settlements = readStored(SETTLEMENT_STORAGE_KEY, "embeddedSettlementData", "settlements")
+      .map(normaliseSettlement);
+  }
+
   function loadKingdoms() {
     let embedded = { savedAt: 0, kingdoms: [] };
     try {
@@ -815,7 +952,9 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     clearTimeout(saveTimer);
     const write = () => {
       try {
-        localStorage.setItem(KINGDOM_STORAGE_KEY, JSON.stringify({ savedAt: Date.now(), kingdoms }));
+        const savedAt = Date.now();
+        localStorage.setItem(KINGDOM_STORAGE_KEY, JSON.stringify({ savedAt, kingdoms }));
+        localStorage.setItem(SETTLEMENT_STORAGE_KEY, JSON.stringify({ savedAt, settlements }));
       } catch (error) {
         setStatus("Could not autosave to this browser");
       }
@@ -825,12 +964,24 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   }
 
   // Snapshots carry the selection too, so undo/redo puts you back where you were.
-  const snapshot = () => ({ kingdoms: clone(kingdoms), selectedId });
+  const snapshot = () => ({
+    kingdoms: clone(kingdoms),
+    settlements: clone(settlements),
+    selectedId,
+    selectedSettlementId,
+  });
 
   function restore(state) {
     kingdoms = state.kingdoms;
+    settlements = state.settlements;
     selectedId = kingdoms.some(k => k.id === state.selectedId) ? state.selectedId : null;
+    selectedSettlementId = settlements.some(s => s.id === state.selectedSettlementId)
+      ? state.selectedSettlementId : null;
     if (selectedId) openInspector(); else dom.inspector.classList.add("hidden");
+    syncSettlements();
+    buildCapitalOptions();
+    updateSettlementManifest();
+    syncSettlementInspector();
   }
 
   function pushUndo() {
@@ -987,8 +1138,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
     renderHandles();
     updateLabelFit();
-    dom.countLabel.textContent =
-      `${kingdoms.length} kingdom${kingdoms.length === 1 ? "" : "s"} · ${settlements.length} settlements`;
+    updateCounts();
   }
 
   // Handle radii are written as numbers, not calc(var(...)): CSS variables are
@@ -1121,13 +1271,32 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     return set.find(entry => Number(entry.id) === Number(design)) || set[0];
   }
 
-  function renderSettlements() {
-    const fragment = document.createDocumentFragment();
+  const settlementNodes = new Map();
+
+  // Reuses elements keyed by id: rebuilding every <img> during a drag would
+  // rehydrate megabytes of inline base64 each frame.
+  function syncSettlements() {
+    const live = new Set();
     settlements.forEach(item => {
+      live.add(item.id);
+      let entry = settlementNodes.get(item.id);
+      if (!entry) {
+        const el = document.createElement("div");
+        const img = document.createElement("img");
+        el.appendChild(img);
+        el.addEventListener("keydown", event => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          activateSettlement(item.id, "keyboard");
+        });
+        entry = { el, img, iconKey: "" };
+        settlementNodes.set(item.id, entry);
+      }
+      const { el, img } = entry;
       const type = iconLibrary[item.type] ? item.type : "town";
       const design = [1, 2, 3].includes(Number(item.design)) ? Number(item.design) : 1;
-      const el = document.createElement("div");
-      el.className = "settlement";
+
+      el.className = `settlement${item.id === selectedSettlementId ? " selected" : ""}`;
       el.dataset.mapEntity = "settlement";
       el.dataset.settlementId = item.id;
       el.dataset.settlementType = type;
@@ -1149,18 +1318,27 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       el.style.width = `${item.width}px`;
       el.style.opacity = item.opacity ?? 1;
       el.style.transform = `translate(-50%,-100%) rotate(${item.rotation || 0}deg)`;
-      const img = document.createElement("img");
-      img.src = getIcon(type, design).src;
+
+      const iconKey = `${type}-${design}`;
+      if (entry.iconKey !== iconKey) {
+        img.src = getIcon(type, design).src;
+        entry.iconKey = iconKey;
+      }
       img.alt = item.name || capitalize(type);
-      el.appendChild(img);
-      el.addEventListener("keydown", event => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        activateSettlement(item.id, "keyboard");
-      });
-      fragment.appendChild(el);
+      dom.settlementLayer.appendChild(el);
     });
-    dom.settlementLayer.appendChild(fragment);
+
+    settlementNodes.forEach((entry, id) => {
+      if (live.has(id)) return;
+      entry.el.remove();
+      settlementNodes.delete(id);
+    });
+    updateCounts();
+  }
+
+  function updateCounts() {
+    dom.countLabel.textContent =
+      `${kingdoms.length} kingdom${kingdoms.length === 1 ? "" : "s"} · ${settlements.length} settlements`;
   }
 
   function settlementRecord(item, index) {
@@ -1199,8 +1377,8 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       schema: "merovar.interactive-map.v2",
       map: { id: "merovar-world-map", width: MAP_WIDTH, height: MAP_HEIGHT, coordinateOrigin: "top-left" },
       counts,
-      editable: false,
-      visualGuarantee: "Settlement positions, sizes, rotations, map image, geography, coastlines, islands and borders are unchanged.",
+      editable: true,
+      visualGuarantee: "The map image, geography, coastlines and islands are unchanged. Settlement artwork is limited to the nine icons already embedded in this file; no new artwork is introduced.",
       integration: {
         selector: '.settlement[data-map-entity="settlement"]',
         manifestElement: "#merovarSettlementManifest",
@@ -1376,6 +1554,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   const MODE_LABELS = {
     move: "Move Map",
+    settlement: "Add Settlement",
     draw: "Draw Kingdom",
     island: "Add Island",
     edit: "Select / Edit Border",
@@ -1387,6 +1566,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   const MODE_HINTS = {
     move: "Drag to pan · scroll to zoom · click a settlement or kingdom for details",
+    settlement: "Click the map to place the chosen artwork · click one to select · drag to move · Delete removes it",
     draw: "Drag to draw · let go to zoom or pan, then keep drawing · close on the start circle or press Finish · hold Space (or right/middle-drag) to pan · Backspace undoes the last stroke",
     island: "Draw another landmass to add to the selected kingdom · it stays part of the same territory",
     edit: "Click a kingdom to select · drag points to reshape · drag inside to move the whole border",
@@ -1404,10 +1584,13 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     document.querySelectorAll("#toolbar .tool[data-mode]").forEach(button => {
       button.classList.toggle("active", button.dataset.mode === next);
     });
-    document.body.classList.remove("mode-move", "mode-draw", "mode-island", "mode-edit", "mode-addpoint", "mode-delpoint");
+    document.body.classList.remove("mode-move", "mode-settlement", "mode-draw", "mode-island",
+      "mode-edit", "mode-addpoint", "mode-delpoint");
     document.body.classList.add(`mode-${next}`);
     // Settlements should not swallow clicks that are meant for the border tools.
-    document.body.classList.toggle("locked-settlements", next !== "move");
+    document.body.classList.toggle("locked-settlements", next !== "move" && next !== "settlement");
+    dom.palette.classList.toggle("hidden", next !== "settlement");
+    if (next !== "settlement" && selectedSettlementId) deselectSettlement();
     dom.viewport.classList.toggle("drawing", DRAW_MODES.includes(next));
     dom.viewport.classList.toggle("picking", next === "addpoint" || next === "delpoint");
     if (DRAW_MODES.includes(next)) { draftSegments = []; activeSegment = null; renderDraft(); }
@@ -1563,6 +1746,22 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     }
 
     const target = hitTest(event.clientX, event.clientY);
+
+    if (mode === "settlement" && !wantsPan) {
+      const el = target?.closest('[data-map-entity="settlement"]');
+      if (el) {
+        const item = settlementById(el.dataset.settlementId);
+        if (item) {
+          selectSettlement(item.id);
+          drag = {
+            ...base, kind: "settlement", id: item.id,
+            startX: item.x, startY: item.y, snapshotTaken: false,
+          };
+          return;
+        }
+      }
+    }
+
     const vertex = target?.closest(".vertex[data-vertex-index]");
     if (vertex && mode === "edit" && !wantsPan) {
       drag = {
@@ -1632,6 +1831,17 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       return;
     }
 
+    if (drag.kind === "settlement") {
+      const item = settlementById(drag.id);
+      if (!item) return;
+      if (!drag.snapshotTaken) { pushUndo(); drag.snapshotTaken = true; }
+      const current = toMap(event.clientX, event.clientY);
+      item.x = clamp(current.x, 0, MAP_WIDTH);
+      item.y = clamp(current.y, 0, MAP_HEIGHT);
+      syncSettlements();
+      return;
+    }
+
     const kingdom = byId(selectedId);
     if (!kingdom) return;
 
@@ -1680,6 +1890,9 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     }
 
     if (drag?.el) drag.el.classList.remove("dragging");
+    if (drag?.kind === "settlement" && drag.snapshotTaken) {
+      afterSettlementChange("Settlement moved");
+    }
     if (drag && (drag.kind === "vertex" || drag.kind === "kingdom") && drag.snapshotTaken) {
       afterChange(drag.kind === "vertex" ? "Point moved" : "Border moved");
     }
@@ -1699,6 +1912,13 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     const point = toMap(event.clientX, event.clientY);
 
     if (DRAW_MODES.includes(mode)) return; // drawing is a drag; a click means nothing here
+
+    if (mode === "settlement") {
+      const el = target?.closest('[data-map-entity="settlement"]');
+      // Clicking one selects it (handled on pointerdown); empty map places a new one.
+      if (!el) placeSettlement(point);
+      return;
+    }
     if (mode === "edit" && target?.closest(".vertex[data-vertex-index]")) return;
 
     if (mode === "delpoint" && selectedId) {
@@ -1855,7 +2075,153 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     dom.fillOpacityValue.textContent = `${Math.round(kingdom.fillOpacity * 100)}%`;
   }
 
+  /* ================================================ settlement placement */
+
+  let selectedSettlementId = null;
+  let paletteType = "town";
+  let paletteDesign = 1;
+
+  const settlementById = (id) => settlements.find(item => item.id === id) || null;
+
+  function afterSettlementChange(message) {
+    syncSettlements();
+    updateSettlementManifest();
+    updateKingdomManifest(); // settlement counts inside kingdoms may have moved
+    buildCapitalOptions();
+    syncSettlementInspector();
+    updateButtons();
+    persist(false);
+    if (message) setStatus(message);
+  }
+
+  // Thumbnails come straight from the embedded icon library — the same nine
+  // images already on the map. No new artwork is ever introduced.
+  function renderPalette() {
+    dom.designGrid.textContent = "";
+    (iconLibrary[paletteType] || []).forEach(icon => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `design-option${Number(icon.id) === paletteDesign ? " active" : ""}`;
+      button.dataset.design = String(icon.id);
+      const img = document.createElement("img");
+      img.src = icon.src;
+      img.alt = `${capitalize(paletteType)} design ${icon.id}`;
+      const number = document.createElement("span");
+      number.className = "design-number";
+      number.textContent = String(icon.id);
+      button.append(img, number);
+      button.addEventListener("click", () => {
+        paletteDesign = Number(icon.id);
+        renderPalette();
+      });
+      dom.designGrid.appendChild(button);
+    });
+    document.querySelectorAll("#palette .type-tab").forEach(tab => {
+      tab.classList.toggle("active", tab.dataset.type === paletteType);
+    });
+    dom.newSize.value = String(DEFAULT_WIDTH[paletteType]);
+    dom.newSizeValue.textContent = `${dom.newSize.value} px`;
+  }
+
+  function placeSettlement(point) {
+    pushUndo();
+    const item = normaliseSettlement({
+      id: uid(paletteType),
+      type: paletteType,
+      design: paletteDesign,
+      x: point.x,
+      y: point.y,
+      width: Number(dom.newSize.value) || DEFAULT_WIDTH[paletteType],
+    }, settlements.length);
+    settlements.push(item);
+    selectedSettlementId = item.id;
+    afterSettlementChange(`Placed a ${item.type}`);
+    openSettlementInspector();
+  }
+
+  function selectSettlement(id) {
+    selectedSettlementId = id;
+    syncSettlements();
+    openSettlementInspector();
+    updateButtons();
+  }
+
+  function deselectSettlement() {
+    selectedSettlementId = null;
+    dom.settlementInspector.classList.add("hidden");
+    syncSettlements();
+    updateButtons();
+  }
+
+  function openSettlementInspector() {
+    if (!settlementById(selectedSettlementId)) {
+      dom.settlementInspector.classList.add("hidden");
+      return;
+    }
+    dom.settlementInspector.classList.remove("hidden");
+    syncSettlementInspector();
+  }
+
+  function syncSettlementInspector() {
+    const item = settlementById(selectedSettlementId);
+    if (!item) { dom.settlementInspector.classList.add("hidden"); return; }
+    const index = settlements.filter(s => s.type === item.type).indexOf(item) + 1;
+    dom.settlementTitle.textContent = item.name || `${capitalize(item.type)} ${index}`;
+    dom.settlementMeta.textContent =
+      `${capitalize(item.type)} · design ${item.design} · ${Math.round(item.x)}, ${Math.round(item.y)}`;
+    if (document.activeElement !== dom.sName) dom.sName.value = item.name;
+    if (document.activeElement !== dom.sNotes) dom.sNotes.value = item.notes;
+    if (document.activeElement !== dom.sWidth) dom.sWidth.value = String(Math.round(item.width));
+    if (document.activeElement !== dom.sRotation) dom.sRotation.value = String(item.rotation || 0);
+    dom.sType.value = item.type;
+
+    dom.sDesignGrid.textContent = "";
+    (iconLibrary[item.type] || []).forEach(icon => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `design-mini${Number(icon.id) === Number(item.design) ? " active" : ""}`;
+      const img = document.createElement("img");
+      img.src = icon.src;
+      img.alt = `Design ${icon.id}`;
+      button.appendChild(img);
+      button.addEventListener("click", () => {
+        pushUndo();
+        item.design = Number(icon.id);
+        afterSettlementChange("Design changed");
+      });
+      dom.sDesignGrid.appendChild(button);
+    });
+  }
+
+  function duplicateSettlement() {
+    const item = settlementById(selectedSettlementId);
+    if (!item) return;
+    pushUndo();
+    const copy = normaliseSettlement({
+      ...clone(item),
+      id: uid(item.type),
+      x: clamp(item.x + 60, 0, MAP_WIDTH),
+      y: clamp(item.y + 40, 0, MAP_HEIGHT),
+    }, settlements.length);
+    settlements.push(copy);
+    selectedSettlementId = copy.id;
+    afterSettlementChange("Settlement duplicated");
+    openSettlementInspector();
+  }
+
+  function deleteSettlement() {
+    const item = settlementById(selectedSettlementId);
+    if (!item) return;
+    pushUndo();
+    settlements = settlements.filter(s => s.id !== item.id);
+    selectedSettlementId = null;
+    dom.settlementInspector.classList.add("hidden");
+    afterSettlementChange("Settlement deleted");
+  }
+
   function buildCapitalOptions() {
+    const previous = dom.editCapital.value;
+    dom.editCapital.innerHTML = '<option value="">None</option>';
     const counters = {};
     settlements.forEach(item => {
       const type = iconLibrary[item.type] ? item.type : "town";
@@ -1865,6 +2231,8 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       option.textContent = `${capitalize(type)} ${counters[type]} · ${Math.round(item.x)}, ${Math.round(item.y)}`;
       dom.editCapital.appendChild(option);
     });
+    // Keep the chosen capital selected when the list is rebuilt.
+    if (settlements.some(item => item.id === previous)) dom.editCapital.value = previous;
   }
 
   function editField(input, apply, snapshot = true) {
@@ -1889,6 +2257,47 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   editField(dom.editBorderColor, (k, v) => { k.borderColor = v; });
   editField(dom.editFillColor, (k, v) => { k.fillColor = v; });
   editField(dom.editFillOpacity, (k, v) => { k.fillOpacity = clamp(Number(v) || 0, 0, 0.45); });
+  function settlementField(input, apply, snapshot = true) {
+    let pending = false;
+    input.addEventListener("input", () => {
+      const item = settlementById(selectedSettlementId);
+      if (!item) return;
+      if (snapshot && !pending) { pushUndo(); pending = true; }
+      apply(item, input.value);
+      afterSettlementChange(null);
+    });
+    input.addEventListener("change", () => { pending = false; });
+    input.addEventListener("blur", () => { pending = false; });
+  }
+
+  settlementField(dom.sName, (item, value) => { item.name = value; });
+  settlementField(dom.sNotes, (item, value) => { item.notes = value; });
+  settlementField(dom.sWidth, (item, value) => { item.width = clamp(Number(value) || item.width, 20, 200); });
+  settlementField(dom.sRotation, (item, value) => { item.rotation = clamp(Number(value) || 0, -180, 180); });
+  dom.sType.addEventListener("change", () => {
+    const item = settlementById(selectedSettlementId);
+    if (!item) return;
+    pushUndo();
+    item.type = iconLibrary[dom.sType.value] ? dom.sType.value : "town";
+    // Designs are per type; fall back to the first if this one has no match.
+    if (!getIcon(item.type, item.design)) item.design = 1;
+    afterSettlementChange("Type changed");
+  });
+  document.getElementById("sDuplicate").addEventListener("click", duplicateSettlement);
+  document.getElementById("sDelete").addEventListener("click", deleteSettlement);
+  document.getElementById("sClose").addEventListener("click", deselectSettlement);
+
+  document.querySelectorAll("#palette .type-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      paletteType = tab.dataset.type;
+      paletteDesign = 1;
+      renderPalette();
+    });
+  });
+  dom.newSize.addEventListener("input", () => {
+    dom.newSizeValue.textContent = `${dom.newSize.value} px`;
+  });
+
   dom.mergeKingdom.addEventListener("change", () => {
     const otherId = dom.mergeKingdom.value;
     if (!otherId || !selectedId) return;
@@ -1991,8 +2400,11 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   function saveEditedHtml() {
     persist(true);
     const cloneDoc = document.documentElement.cloneNode(true);
+    const savedAt = Date.now();
     cloneDoc.querySelector("#embeddedKingdomData").textContent =
-      JSON.stringify({ version: 1, savedAt: Date.now(), kingdoms }).replace(/</g, "\\u003c");
+      JSON.stringify({ version: 1, savedAt, kingdoms }).replace(/</g, "\\u003c");
+    cloneDoc.querySelector("#embeddedSettlementData").textContent =
+      JSON.stringify({ version: 2, savedAt, settlements }).replace(/</g, "\\u003c");
     cloneDoc.querySelector("#merovarKingdomManifest").textContent =
       JSON.stringify(buildKingdomManifest()).replace(/</g, "\\u003c");
     cloneDoc.querySelector("#merovarSettlementManifest").textContent =
@@ -2075,10 +2487,12 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
     if (event.key === "Escape") {
       if (draftPath().length) cancelDraft(true);
+      else if (selectedSettlementId) deselectSettlement();
       else if (selectedId) deselect();
       else setMode("move");
       return;
     }
+    if (event.key === "Delete" && selectedSettlementId) { deleteSettlement(); return; }
     if (event.key === "Enter" && DRAW_MODES.includes(mode)) { finishDraft(); return; }
     if (event.key === "Backspace" && DRAW_MODES.includes(mode)) {
       event.preventDefault();
@@ -2141,7 +2555,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     getByType: type => clone(buildSettlementManifest().settlements.filter(item => item.type === type)),
     getElement: id => document.querySelector(`[data-settlement-id="${CSS.escape(id)}"]`),
     activate: (id, source = "api") => activateSettlement(id, source),
-    editable: false,
+    editable: true,
     eventName: "merovar:settlement-click",
     selector: '.settlement[data-map-entity="settlement"]',
   });
@@ -2179,9 +2593,11 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   /* ================================================================= start */
 
+  loadSettlements();
   loadKingdoms();
   buildCapitalOptions();
-  renderSettlements();
+  renderPalette();
+  syncSettlements();
   updateSettlementManifest();
   render();
   updateKingdomManifest();
