@@ -115,7 +115,22 @@ body.hide-names .kingdom-label { display:none; }
   fill:rgba(212,168,95,.07); stroke:rgba(244,213,152,.85);
   stroke-width:calc(var(--k-ink,3) * 1px);
   stroke-dasharray:calc(var(--k-ink,3) * 4px) calc(var(--k-ink,3) * 3px);
-  stroke-linejoin:round; pointer-events:none;
+  stroke-linejoin:round; stroke-linecap:round; pointer-events:none;
+}
+/* Back at the start: the outline goes solid to say "let go now". */
+.draft-line.armed {
+  stroke:rgba(255,236,187,.98); stroke-dasharray:none;
+  fill:rgba(212,168,95,.13);
+}
+.snap-target {
+  fill:rgba(26,18,12,.42); stroke:rgba(255,236,187,.9);
+  stroke-width:calc(var(--k-ink,3) * 1.3px);
+  stroke-dasharray:calc(var(--k-ink,3) * 3px) calc(var(--k-ink,3) * 2.5px);
+  pointer-events:none;
+}
+.snap-target.armed {
+  fill:rgba(255,236,187,.42); stroke:rgba(255,247,222,1); stroke-dasharray:none;
+  stroke-width:calc(var(--k-ink,3) * 2px);
 }
 .vertex {
   fill:rgba(28,20,14,.85); stroke:#f4d598;
@@ -318,6 +333,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   const INK_SCREEN_PX = 1.7;
   const LABEL_SCREEN_PX = 17;
   const HANDLE_SCREEN_PX = 6;
+  const SNAP_SCREEN_PX = 26;
 
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -409,55 +425,191 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     };
   }
 
-  // Walks the polygon and lets the line wander sideways so the outline reads as
-  // an inked stroke rather than a vector polygon. The wander is a damped random
-  // walk — low frequency, like a hand drifting — rather than per-sample noise,
-  // which would just look like jitter. Deterministic per kingdom id.
-  function roughenPolygon(points, seed, amplitudeScale = 1) {
-    const random = makeRandom(seed);
-    const out = [];
-    const count = points.length;
-    for (let i = 0; i < count; i += 1) {
-      const a = points[i];
-      const b = points[(i + 1) % count];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const length = Math.hypot(dx, dy) || 1;
-      const steps = clamp(Math.round(length / 48), 2, 20);
-      const nx = -dy / length;
-      const ny = dx / length;
-      const amp = clamp(length * 0.024, 5, 26) * amplitudeScale;
+  // A turn sharper than this is a deliberate corner and is kept as one; gentler
+  // turns get rounded. Keeps click-placed rectangles rectangular while letting
+  // freehand loops read as curves.
+  const SHARP_TURN = Math.PI * 0.31;
 
-      let wander = 0;
-      for (let step = 0; step < steps; step += 1) {
-        const t = step / steps;
-        wander = wander * 0.55 + (random() - 0.5) * 2 * 0.45;
-        // Taper to zero at the corners so the vertices stay exactly where placed.
-        const taper = Math.sin(Math.PI * t);
-        const offset = wander * 1.9 * amp * taper;
-        out.push({ x: a.x + dx * t + nx * offset, y: a.y + dy * t + ny * offset });
-      }
-    }
-    return out;
-  }
-
-  // Closed Catmull-Rom spline expressed as cubic beziers.
-  function smoothClosedPath(points) {
+  // Centripetal Catmull-Rom (alpha = 0.5) control points for each edge of the
+  // ring. The uniform form overshoots on tight turns and ties the curve in
+  // little knots — exactly what a hand-drawn outline is full of.
+  function bezierRing(points) {
     const n = points.length;
-    if (n < 3) return "";
-    let d = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+    const knot = (a, b) => Math.pow(Math.hypot(b.x - a.x, b.y - a.y), 0.5) || 1e-4;
+
+    const sharp = points.map((p, i) => {
+      const prev = points[(i - 1 + n) % n];
+      const next = points[(i + 1) % n];
+      const incoming = Math.atan2(p.y - prev.y, p.x - prev.x);
+      const outgoing = Math.atan2(next.y - p.y, next.x - p.x);
+      let turn = Math.abs(outgoing - incoming);
+      if (turn > Math.PI) turn = 2 * Math.PI - turn;
+      return turn > SHARP_TURN;
+    });
+
+    const segments = [];
     for (let i = 0; i < n; i += 1) {
       const p0 = points[(i - 1 + n) % n];
       const p1 = points[i];
       const p2 = points[(i + 1) % n];
       const p3 = points[(i + 2) % n];
-      const c1x = p1.x + (p2.x - p0.x) / 6;
-      const c1y = p1.y + (p2.y - p0.y) / 6;
-      const c2x = p2.x - (p3.x - p1.x) / 6;
-      const c2y = p2.y - (p3.y - p1.y) / 6;
-      d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+      const d1 = knot(p0, p1);
+      const d2 = knot(p1, p2);
+      const d3 = knot(p2, p3);
+      const c1 = {};
+      const c2 = {};
+      for (const axis of ["x", "y"]) {
+        c1[axis] = (d1 * d1 * p2[axis] - d2 * d2 * p0[axis] +
+          (2 * d1 * d1 + 3 * d1 * d2 + d2 * d2) * p1[axis]) / (3 * d1 * (d1 + d2));
+        c2[axis] = (d3 * d3 * p1[axis] - d2 * d2 * p3[axis] +
+          (2 * d3 * d3 + 3 * d3 * d2 + d2 * d2) * p2[axis]) / (3 * d3 * (d3 + d2));
+      }
+      // Collapsing a tangent onto its vertex makes that end of the edge straight.
+      segments.push({
+        p1,
+        p2,
+        c1: sharp[i] ? { ...p1 } : c1,
+        c2: sharp[(i + 1) % n] ? { ...p2 } : c2,
+      });
     }
+    return segments;
+  }
+
+  const bezierAt = (s, t) => {
+    const u = 1 - t;
+    const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+    return {
+      x: a * s.p1.x + b * s.c1.x + c * s.c2.x + d * s.p2.x,
+      y: a * s.p1.y + b * s.c1.y + c * s.c2.y + d * s.p2.y,
+    };
+  };
+
+  const bezierTangent = (s, t) => {
+    const u = 1 - t;
+    const a = 3 * u * u, b = 6 * u * t, c = 3 * t * t;
+    return {
+      x: a * (s.c1.x - s.p1.x) + b * (s.c2.x - s.c1.x) + c * (s.p2.x - s.c2.x),
+      y: a * (s.c1.y - s.p1.y) + b * (s.c2.y - s.c1.y) + c * (s.p2.y - s.c2.y),
+    };
+  };
+
+  // Samples along the smoothed outline and lets the line wander sideways so it
+  // reads as an inked stroke. The wander is a damped random walk — low
+  // frequency, like a hand drifting — not per-sample noise, which is just
+  // jitter. Sampling follows the curve, never the straight chord, or the
+  // smoothing would have nothing left to round. Deterministic per kingdom id.
+  function roughenPolygon(points, seed, amplitudeScale = 1) {
+    const random = makeRandom(seed);
+    const out = [];
+    bezierRing(points).forEach(segment => {
+      const length = Math.hypot(segment.p2.x - segment.p1.x, segment.p2.y - segment.p1.y) || 1;
+      const steps = clamp(Math.round(length / 40), 3, 24);
+      // Low floor: a freehand outline has many short segments and already
+      // carries the hand's own character — it must not be squiggled further.
+      const amp = clamp(length * 0.022, 2.5, 24) * amplitudeScale;
+
+      let wander = 0;
+      for (let step = 0; step < steps; step += 1) {
+        const t = step / steps;
+        wander = wander * 0.55 + (random() - 0.5) * 2 * 0.45;
+        const base = bezierAt(segment, t);
+        const tangent = bezierTangent(segment, t);
+        const magnitude = Math.hypot(tangent.x, tangent.y) || 1;
+        // Taper to zero at the corners so the vertices stay exactly where placed.
+        const taper = Math.sin(Math.PI * t);
+        const offset = wander * 1.9 * amp * taper;
+        out.push({
+          x: base.x - (tangent.y / magnitude) * offset,
+          y: base.y + (tangent.x / magnitude) * offset,
+        });
+      }
+    });
+    return out;
+  }
+
+  function smoothClosedPath(points) {
+    if (points.length < 3) return "";
+    let d = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+    bezierRing(points).forEach(s => {
+      d += ` C ${s.c1.x.toFixed(2)} ${s.c1.y.toFixed(2)}, ${s.c2.x.toFixed(2)} ${s.c2.y.toFixed(2)}, ${s.p2.x.toFixed(2)} ${s.p2.y.toFixed(2)}`;
+    });
     return `${d} Z`;
+  }
+
+  function segmentIntersection(a, b, c, d) {
+    const rx = b.x - a.x, ry = b.y - a.y;
+    const sx = d.x - c.x, sy = d.y - c.y;
+    const denominator = rx * sy - ry * sx;
+    if (Math.abs(denominator) < 1e-9) return null;
+    const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / denominator;
+    const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / denominator;
+    if (t <= 0.0001 || t >= 0.9999 || u <= 0.0001 || u >= 0.9999) return null;
+    return { x: a.x + t * rx, y: a.y + t * ry };
+  }
+
+  // Where a hand-drawn outline crosses itself it leaves a tangle. Cut at the
+  // crossing and keep the larger of the two loops.
+  function removeSelfIntersections(points) {
+    let ring = points.slice();
+    for (let guard = 0; guard < 16; guard += 1) {
+      const n = ring.length;
+      if (n < 4) break;
+      let cut = null;
+      for (let i = 0; i < n && !cut; i += 1) {
+        for (let j = i + 2; j < n; j += 1) {
+          if (i === 0 && j === n - 1) continue; // adjacent across the closing edge
+          const hit = segmentIntersection(ring[i], ring[(i + 1) % n], ring[j], ring[(j + 1) % n]);
+          if (!hit) continue;
+          const inner = [hit, ...ring.slice(i + 1, j + 1)];
+          const outer = [...ring.slice(0, i + 1), hit, ...ring.slice(j + 1)];
+          cut = polygonArea(inner) > polygonArea(outer) ? inner : outer;
+          break;
+        }
+      }
+      if (!cut || cut.length < 3) break;
+      ring = cut;
+    }
+    return ring.length >= 3 ? ring : points;
+  }
+
+  function dedupePoints(points, minDistance) {
+    const out = [];
+    points.forEach(point => {
+      const last = out[out.length - 1];
+      if (!last || Math.hypot(point.x - last.x, point.y - last.y) >= minDistance) out.push(point);
+    });
+    return out;
+  }
+
+  // Averages out hand tremor before the shape is simplified.
+  function smoothStroke(points, passes = 2) {
+    let current = points;
+    for (let pass = 0; pass < passes && current.length > 3; pass += 1) {
+      const next = [current[0]];
+      for (let i = 1; i < current.length - 1; i += 1) {
+        next.push({
+          x: (current[i - 1].x + current[i].x * 2 + current[i + 1].x) / 4,
+          y: (current[i - 1].y + current[i].y * 2 + current[i + 1].y) / 4,
+        });
+      }
+      next.push(current[current.length - 1]);
+      current = next;
+    }
+    return current;
+  }
+
+  // Once the stroke has left the starting area, coming back within the snap
+  // radius means "close here" — everything drawn past that point is the hand
+  // overshooting and would otherwise cross the outline near the start.
+  function trimToStart(points, radius) {
+    if (points.length < 8) return points;
+    const start = points[0];
+    const away = points.findIndex(p => Math.hypot(p.x - start.x, p.y - start.y) > radius * 1.8);
+    if (away === -1) return points;
+    for (let i = away + 1; i < points.length; i += 1) {
+      if (Math.hypot(points[i].x - start.x, points[i].y - start.y) <= radius) return points.slice(0, i);
+    }
+    return points;
   }
 
   // Ramer-Douglas-Peucker. A freehand stroke arrives as hundreds of samples;
@@ -822,19 +974,44 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     });
   }
 
+  // True once the stroke has left the start and come back to it.
+  function strokeNearStart() {
+    const drawn = strokePoints || [];
+    if (drawn.length < 8) return false;
+    const start = drawn[0];
+    const here = drawn[drawn.length - 1];
+    const radius = snapRadius();
+    const left = drawn.some(p => Math.hypot(p.x - start.x, p.y - start.y) > radius * 1.8);
+    return left && Math.hypot(here.x - start.x, here.y - start.y) <= radius;
+  }
+
   function renderDraft(cursor) {
     dom.draftGroup.textContent = "";
     const placed = draftPoints || [];
-    const drawn = strokePoints || [];
+    const raw = strokePoints || [];
+    // Preview the smoothed line, not the raw samples — otherwise the outline
+    // looks jagged while you draw and then changes shape when you let go.
+    const drawn = raw.length > 4 ? smoothStroke(raw, 1) : raw;
     const points = [...placed, ...drawn, ...(cursor ? [cursor] : [])];
     if (!points.length) return;
 
     const path = svgEl("path");
-    path.setAttribute("class", "draft-line");
     const d = points.map((p, i) => `${i ? "L" : "M"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
     // Show the closing edge once there is a shape to close.
     path.setAttribute("d", points.length > 2 ? `${d} Z` : d);
     dom.draftGroup.appendChild(path);
+
+    // The start of a freehand stroke is a target you can come back to.
+    const armed = strokeNearStart();
+    path.setAttribute("class", `draft-line${armed ? " armed" : ""}`);
+    if (drawn.length > 6) {
+      const target = svgEl("circle");
+      target.setAttribute("class", `snap-target${armed ? " armed" : ""}`);
+      target.setAttribute("cx", drawn[0].x.toFixed(2));
+      target.setAttribute("cy", drawn[0].y.toFixed(2));
+      target.setAttribute("r", snapRadius().toFixed(2));
+      dom.draftGroup.appendChild(target);
+    }
 
     // Only clicked corners get handles; a freehand stroke would draw hundreds.
     const radius = handleRadius();
@@ -1133,7 +1310,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   const MODE_HINTS = {
     move: "Drag to pan · scroll to zoom · click a settlement or kingdom for details",
-    draw: "Press and drag to draw the outline · let go to close it · Esc cancels · middle-drag to pan",
+    draw: "Press and drag around the area · come back to the circle and let go to close · Esc cancels · middle-drag to pan",
     edit: "Click a kingdom to select · drag points to reshape · drag inside to move the whole border",
     addpoint: "Click a hollow midpoint handle, or anywhere on the outline, to insert a point",
     delpoint: "Click a border point to remove it (minimum three)",
@@ -1176,11 +1353,20 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   /* ============================================================== drawing */
 
-  // Clicked corners first, then the simplified freehand stroke.
+  const snapRadius = () => SNAP_SCREEN_PX / scale;
+
+  // Raw samples -> trimmed at the closing point -> de-jittered -> simplified to
+  // draggable corners -> untangled. Clicked corners are prepended untouched.
   function collectDraft() {
     const placed = draftPoints || [];
-    const drawn = strokePoints && strokePoints.length > 2 ? simplifyStroke(strokePoints) : (strokePoints || []);
-    return [...placed, ...drawn];
+    let drawn = strokePoints || [];
+    if (drawn.length > 2) {
+      drawn = trimToStart(drawn, snapRadius());
+      drawn = smoothStroke(dedupePoints(drawn, 1.5 / scale), 2);
+      drawn = simplifyStroke(drawn);
+    }
+    const combined = [...placed, ...drawn];
+    return combined.length >= 3 ? removeSelfIntersections(combined) : combined;
   }
 
   function finishDraft() {

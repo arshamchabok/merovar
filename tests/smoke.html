@@ -26,11 +26,33 @@ function strokeAlong(win, el, path) {
 }
 
 // Samples a circle, the way a hand would sweep round a territory.
-function circlePath(cx, cy, r, steps) {
+// `turns` > 1 carries the stroke back past its own start, wobble adds tremor.
+function circlePath(cx, cy, r, steps, turns = 1, wobble = 0) {
   return Array.from({ length: steps }, (_, i) => {
-    const a = (i / steps) * Math.PI * 2;
-    return [cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.72];
+    const a = (i / steps) * Math.PI * 2 * turns;
+    const jitter = wobble ? Math.sin(i * 2.7) * wobble + Math.sin(i * 6.1) * wobble * 0.6 : 0;
+    return [cx + Math.cos(a) * (r + jitter), cy + Math.sin(a) * (r + jitter) * 0.72];
   });
+}
+
+// Does a closed polygon cross itself?
+function selfIntersects(points) {
+  const n = points.length;
+  const cross = (a, b, c, d) => {
+    const rx = b.x - a.x, ry = b.y - a.y, sx = d.x - c.x, sy = d.y - c.y;
+    const den = rx * sy - ry * sx;
+    if (Math.abs(den) < 1e-9) return false;
+    const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / den;
+    const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / den;
+    return t > 0.001 && t < 0.999 && u > 0.001 && u < 0.999;
+  };
+  for (let i = 0; i < n; i += 1) {
+    for (let j = i + 2; j < n; j += 1) {
+      if (i === 0 && j === n - 1) continue;
+      if (cross(points[i], points[(i + 1) % n], points[j], points[(j + 1) % n])) return true;
+    }
+  }
+  return false;
 }
 
 function clickAt(win, el, x, y) {
@@ -283,6 +305,75 @@ frame.addEventListener("load", async () => {
     });
     check("stray tap is discarded, no spike in the shape", !strayFar,
       `${latest.geometry.pointCount} points`);
+
+    // --- the reported bug: drawing back over your own starting point --------
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    // 1.25 turns with tremor: the hand goes round and carries on past the start.
+    strokeAlong(win, viewport, circlePath(430, 380, 150, 150, 1.25, 9));
+    await sleep(220);
+    const looped = api.getAllKingdoms().at(-1);
+    check("overshooting the start still makes one clean kingdom",
+      looped.geometry.pointCount >= 6 && looped.geometry.pointCount <= 60,
+      `${looped.geometry.pointCount} points`);
+    check("no self-crossing where the stroke overlapped itself",
+      !selfIntersects(looped.geometry.points), "polygon is simple");
+    check("overshoot trimmed, shape not collapsed",
+      looped.geometry.areaSquareUnits > 200000,
+      `${looped.geometry.areaSquareUnits} sq units`);
+    const box = looped.geometry.boundingBox;
+    check("shape stays a rough ellipse, no spike",
+      box.width < 1800 && box.height < 1400, `${box.width.toFixed(0)}x${box.height.toFixed(0)}`);
+
+    // The smoothed curve itself must not loop back on itself either.
+    const curve = doc.querySelector(`.kingdom-line.main[data-kingdom-id]`) ||
+      doc.querySelector(".kingdom-line.main");
+    const curvePts = [...doc.querySelectorAll(".kingdom-line.main")].at(-1).getAttribute("d")
+      .match(/(-?\d+\.?\d*) (-?\d+\.?\d*)/g).map(s => {
+        const [x, y] = s.split(" ").map(Number); return { x, y };
+      });
+    check("rendered ink curve has no knots",
+      !selfIntersects(curvePts.filter((_, i) => i % 3 === 2)),
+      `${curvePts.length} curve nodes`);
+
+    // A tremor-heavy stroke should not come out visibly jagged.
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    strokeAlong(win, viewport, circlePath(430, 380, 150, 160, 1, 14));
+    await sleep(220);
+    const shakyCount = api.getAllKingdoms().length;
+    const shaky = api.getAllKingdoms().at(-1);
+    check("hand tremor is smoothed away", shaky.geometry.pointCount <= 40,
+      `${shaky.geometry.pointCount} points from a shaky stroke`);
+    check("tremor shape is still simple", !selfIntersects(shaky.geometry.points));
+
+    // --- the snap target you come back to ------------------------------------
+    const hold = (type, x, y, buttons) => viewport.dispatchEvent(new win.PointerEvent(type, {
+      clientX: x, clientY: y, bubbles: true, cancelable: true,
+      button: 0, buttons, pointerId: 9, pointerType: "mouse", isPrimary: true,
+    }));
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    const loop = circlePath(500, 400, 140, 100);
+    hold("pointerdown", loop[0][0], loop[0][1], 1);
+    for (const [x, y] of loop.slice(1, 60)) hold("pointermove", x, y, 1);
+    await sleep(60);
+    const targetMid = doc.querySelector(".snap-target");
+    check("snap target appears while drawing", !!targetMid);
+    check("snap target sits on the stroke start", targetMid &&
+      Math.abs(targetMid.getBoundingClientRect().left +
+        targetMid.getBoundingClientRect().width / 2 - loop[0][0]) < 6,
+      `x=${targetMid?.getBoundingClientRect().left.toFixed(0)}`);
+    check("snap target not armed part-way round",
+      targetMid && !targetMid.classList.contains("armed"));
+    for (const [x, y] of loop.slice(60)) hold("pointermove", x, y, 1);
+    hold("pointermove", loop[0][0], loop[0][1], 1);
+    await sleep(60);
+    check("snap target arms on returning to the start",
+      doc.querySelector(".snap-target")?.classList.contains("armed"));
+    check("outline goes solid when armed",
+      doc.querySelector(".draft-line")?.classList.contains("armed"));
+    hold("pointerup", loop[0][0], loop[0][1], 0);
+    await sleep(200);
+    check("releasing on the target closes the shape",
+      api.getAllKingdoms().length === shakyCount + 1 && !doc.querySelector(".snap-target"));
   } catch (error) {
     check("harness completed", false, `${error && error.message} @ ${error && error.stack?.split("\n")[1]}`);
   }
