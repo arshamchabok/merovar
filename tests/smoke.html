@@ -912,6 +912,54 @@ frame.addEventListener("load", async () => {
     check("harness completed", false, `${error && error.message} @ ${error && error.stack?.split("\n")[1]}`);
   }
 
+  // --- which face the site opens with -------------------------------------
+  // Loaded in their own frames so the real entry path is exercised.
+  const openIn = (query) => new Promise(resolve => {
+    const probe = document.createElement("iframe");
+    probe.style.cssText = "width:900px;height:600px;border:0;position:absolute;left:-9999px";
+    probe.addEventListener("load", () => setTimeout(() => resolve(probe), 700));
+    document.body.appendChild(probe);
+    probe.src = `/index.html${query}`;
+  });
+
+  try {
+    const plain = await openIn("");
+    const plainDoc = plain.contentDocument;
+    check("the site opens in the editor by default",
+      !plainDoc.body.classList.contains("presenting") &&
+      plain.contentWindow.getComputedStyle(plainDoc.getElementById("toolbar")).display !== "none",
+      plainDoc.body.className);
+    check("the showcase is still built in, just not shown",
+      !!plainDoc.getElementById("stage") && !!plainDoc.getElementById("cartouche") &&
+      typeof plain.contentWindow.MerovarStage?.present === "function");
+    plain.remove();
+
+    const viewed = await openIn("?view=1");
+    const viewedDoc = viewed.contentDocument;
+    check("?view opens the showcase", viewedDoc.body.classList.contains("presenting"),
+      viewedDoc.body.className);
+    viewed.remove();
+
+    const edited = await openIn("?edit=1");
+    check("?edit opens the editor",
+      !edited.contentDocument.body.classList.contains("presenting"));
+    edited.remove();
+
+    // The toolbar button is the way across without touching the URL.
+    const both = await openIn("");
+    both.contentDocument.getElementById("presentButton").click();
+    await sleep(500);
+    check("View map switches to the showcase",
+      both.contentDocument.body.classList.contains("presenting"));
+    both.contentDocument.getElementById("openEditor").click();
+    await sleep(300);
+    check("Editor switches back",
+      !both.contentDocument.body.classList.contains("presenting"));
+    both.remove();
+  } catch (error) {
+    check("entry point checks ran", false, String(error && error.message));
+  }
+
   check("no runtime errors", errors.length === 0, errors.join(" | "));
   const failed = results.filter(r => r.startsWith("FAIL"));
   document.title = failed.length ? `FAILED ${failed.length}` : `ALL PASS ${results.length}`;

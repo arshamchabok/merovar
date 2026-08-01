@@ -2931,6 +2931,8 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   }
 
   function playIntro() {
+    // Reset so the sequence replays properly on a return visit to the showcase.
+    document.body.classList.remove("stage-lit", "intro-done");
     const settled = fitView();
     // Start a touch closer, so the map settles rather than simply appearing.
     scale = settled.scale * 1.07;
@@ -3188,13 +3190,28 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   setMode("move");
   fitMap();
 
-  // The showcase is what the site opens with; ?edit=1 goes straight to the tools.
-  const wantsEditor = new URLSearchParams(location.search).has("edit");
-  if (wantsEditor) {
-    setPresenting(false);
-  } else {
+  // ---------------------------------------------------------------------
+  // Which face the site opens with.
+  //
+  //   "editor"   — the drawing and naming tools (what you want while building)
+  //   "showcase" — the presentation layer with the intro sequence
+  //
+  // Change this single value to "showcase" when the borders are finished and
+  // the map is ready to be shown. Nothing else needs to move: both faces stay
+  // in the build either way, and ?edit / ?view override this per visit.
+  const OPENS_WITH = "editor";
+  // ---------------------------------------------------------------------
+
+  const params = new URLSearchParams(location.search);
+  const opening = params.has("view") ? "showcase"
+    : params.has("edit") ? "editor"
+    : OPENS_WITH;
+
+  if (opening === "showcase") {
     setPresenting(true);
     playIntro();
+  } else {
+    setPresenting(false);
   }
 
   window.MerovarStage = Object.freeze({
