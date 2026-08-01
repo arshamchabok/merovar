@@ -772,6 +772,109 @@ frame.addEventListener("load", async () => {
     check("the original 94 are untouched",
       win.MerovarMapAPI.getSettlements().length === 94);
 
+    // --- the showcase -----------------------------------------------------
+    doc.getElementById("fitButton").click();
+    await sleep(120);
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    drawClosed(win, viewport, circlePath(430, 380, 150, 70));
+    await sleep(220);
+    const showId = api.getAllKingdoms().at(-1).id;
+    const nameIt = doc.getElementById("editName");
+    nameIt.focus();
+    nameIt.value = "Ashlow Reach";
+    nameIt.dispatchEvent(new win.Event("input", { bubbles: true }));
+    nameIt.blur();
+    const houseIt = doc.getElementById("editHouse");
+    houseIt.focus();
+    houseIt.value = "Vharn";
+    houseIt.dispatchEvent(new win.Event("input", { bubbles: true }));
+    houseIt.blur();
+    await sleep(150);
+
+    win.MerovarStage.present();
+    await sleep(600);
+    check("presenting hides every editor panel",
+      doc.body.classList.contains("presenting") &&
+      win.getComputedStyle(doc.getElementById("toolbar")).display === "none" &&
+      win.getComputedStyle(doc.getElementById("status")).display === "none");
+    check("stage is shown", win.getComputedStyle(doc.getElementById("stage")).display === "block");
+    check("legend lists the realm",
+      [...doc.querySelectorAll(".legend-row .legend-name")].some(n => n.textContent === "Ashlow Reach"),
+      [...doc.querySelectorAll(".legend-name")].map(n => n.textContent).join("/"));
+    check("legend swatch uses the realm's own ink",
+      doc.querySelector(".legend-swatch").style.borderColor !== "");
+    check("empty state hidden when realms exist",
+      doc.getElementById("legendEmpty").classList.contains("hidden"));
+    check("cartouche reports the survey",
+      /realm/i.test(doc.getElementById("cartoucheLine").textContent),
+      doc.getElementById("cartoucheLine").textContent);
+    check("survey figures counted from the settlements",
+      /\d+ cities · \d+ towns · \d+ castles/.test(doc.getElementById("surveyLine").textContent),
+      doc.getElementById("surveyLine").textContent);
+    check("scale bar reports map units",
+      /\d+ units/.test(doc.getElementById("scaleLabel").textContent),
+      doc.getElementById("scaleLabel").textContent);
+
+    // Selecting from the legend opens the plate and frames the realm.
+    const beforeFocus = doc.getElementById("world").style.transform;
+    [...doc.querySelectorAll(".legend-row")]
+      .find(row => row.dataset.kingdomRow === showId).click();
+    await sleep(2600);
+    check("realm plate opens", !doc.getElementById("plate").classList.contains("hidden"));
+    check("plate names the realm",
+      doc.getElementById("plateName").textContent === "Ashlow Reach",
+      `got "${doc.getElementById("plateName").textContent}" · legend has ` +
+      [...doc.querySelectorAll(".legend-name")].map(n => n.textContent).join("/"));
+    check("plate shows the ruling house",
+      doc.getElementById("plateHouse").textContent === "House Vharn",
+      `got "${doc.getElementById("plateHouse").textContent}"`);
+    const statLabels = [...doc.querySelectorAll("#plateStats dt")].map(d => d.textContent);
+    check("plate reports real figures",
+      ["Settlements", "Cities", "Towns", "Castles", "Landmasses", "Area"]
+        .every(k => statLabels.includes(k)), statLabels.join(","));
+    check("camera framed the realm",
+      doc.getElementById("world").style.transform !== beforeFocus, "view moved");
+    const others = [...doc.querySelectorAll(".kingdom-fill[data-kingdom-id]")]
+      .filter(el => el.dataset.kingdomId !== showId);
+    check("the chosen realm stays lit",
+      !doc.querySelector(`.kingdom-fill[data-kingdom-id="${showId}"]`).classList.contains("dimmed"));
+    check("other realms recede", others.length > 0 && others.every(el => el.classList.contains("dimmed")),
+      `${others.filter(el => el.classList.contains("dimmed")).length}/${others.length} dimmed`);
+
+    doc.getElementById("plateClose").click();
+    await sleep(900);
+    check("closing the plate returns to the whole map",
+      doc.getElementById("plate").classList.contains("hidden"));
+
+    // Clicking a settlement in the showcase names it rather than editing it.
+    const anyone = doc.querySelector(".settlement");
+    const spot = anyone.getBoundingClientRect();
+    viewport.dispatchEvent(new win.PointerEvent("pointermove", {
+      clientX: spot.left + spot.width / 2, clientY: spot.top + spot.height / 2,
+      bubbles: true, pointerId: 7, pointerType: "mouse", isPrimary: true }));
+    await sleep(120);
+    check("settlement tooltip appears on hover",
+      !doc.getElementById("settlementTip").classList.contains("hidden"));
+    check("tooltip names the settlement",
+      /town|city|castle/i.test(doc.getElementById("settlementTip").textContent),
+      doc.getElementById("settlementTip").textContent);
+
+    check("no editing is possible while presenting",
+      doc.body.classList.contains("mode-move"));
+
+    win.MerovarStage.edit();
+    await sleep(200);
+    check("returning to the editor restores the toolbar",
+      !doc.body.classList.contains("presenting") &&
+      win.getComputedStyle(doc.getElementById("toolbar")).display !== "none");
+    check("leaving the showcase closes its panels",
+      doc.getElementById("plate").classList.contains("hidden") &&
+      doc.getElementById("settlementTip").classList.contains("hidden"));
+
+    api.selectKingdom(showId);
+    doc.getElementById("deleteButton").click();
+    await sleep(150);
+
     // --- legacy single-ring data still loads ----------------------------------
     // Runs last: importing replaces every kingdom.
     const legacy = JSON.stringify({
@@ -815,6 +918,6 @@ frame.addEventListener("load", async () => {
   document.getElementById("out").textContent = results.join("\n");
 });
 
-frame.src = "/index.html";
+frame.src = "/index.html?edit=1";
 </script>
 </body></html>

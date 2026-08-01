@@ -52,6 +52,10 @@ await new Promise(resolve => server.listen(PORT, '127.0.0.1', resolve));
 const profile = await mkdtemp(join(tmpdir(), 'merovar-smoke-'));
 const args = [
   '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
+  // Headless virtual time does not advance CSS transitions or rAF loops, so
+  // animated states never settle. Reduced motion takes the instant path and
+  // makes every assertion deterministic; the animation itself is checked by eye.
+  '--force-prefers-reduced-motion',
   '--virtual-time-budget=30000', '--window-size=1200,820',
   `--user-data-dir=${profile}`, '--dump-dom',
   `http://127.0.0.1:${PORT}/tests/smoke.html`,

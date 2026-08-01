@@ -13,6 +13,16 @@
 <title>Merovar — World Map &amp; Kingdom Borders</title>
 <style>
 :root {
+  /* Presentation layer: parchment and ink, taken from the artwork itself. */
+  --plate: #e9dcc0;
+  --plate-deep: #ddcba7;
+  --ink: #2e2013;
+  --ink-soft: #5c4630;
+  --rule: #8a7350;
+  --gold: #b58a45;
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", "Hoefler Text", Georgia, serif;
+  --font-body: Georgia, "Times New Roman", serif;
+  --font-data: Consolas, "Cascadia Mono", "SF Mono", ui-monospace, "Courier New", monospace;
   color-scheme: dark;
   --panel: rgba(25,18,13,.94);
   --panel2: rgba(41,30,22,.97);
@@ -263,6 +273,172 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 }
 #nav button:hover { background:rgba(212,168,95,.18); border-color:var(--border); }
 
+/* ===================================================== presentation layer */
+/* Two distinct skins: the editor is dark glass, the showcase is parchment. */
+#stage { display:none; }
+/* The editor panels each declare their own #id.hidden; the stage needs a
+   general one or its empty states stay on screen. */
+#stage .hidden { display:none; }
+body.presenting #toolbar,
+body.presenting #palette,
+body.presenting #inspector,
+body.presenting #settlementInspector,
+body.presenting #status,
+body.presenting #nav { display:none; }
+body.presenting #stage { display:block; }
+body.presenting .settlement { pointer-events:auto; cursor:default; }
+
+.plate-surface {
+  background:
+    linear-gradient(180deg, rgba(255,252,244,.5), rgba(255,252,244,0) 42%),
+    var(--plate);
+  border:1px solid var(--rule);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,250,238,.55),
+    inset 0 0 22px rgba(138,115,80,.18),
+    0 14px 34px rgba(10,7,4,.5);
+  color:var(--ink);
+}
+
+#cartouche {
+  position:fixed; z-index:30; left:34px; bottom:34px; margin:0;
+  padding:20px 30px 18px; max-width:min(360px, 46vw);
+  opacity:0; transform:translateY(14px);
+}
+#cartouche figcaption { display:block; }
+.cartouche-eyebrow, .plate-eyebrow {
+  display:block; font-family:var(--font-data); font-size:10px; letter-spacing:.34em;
+  text-transform:uppercase; color:var(--ink-soft);
+}
+#cartouche h1 {
+  margin:.18em 0 0; font-family:var(--font-display); font-weight:400;
+  font-size:clamp(38px, 5.4vw, 62px); line-height:.98; letter-spacing:.04em; color:var(--ink);
+}
+.cartouche-rule {
+  display:block; height:5px; margin:14px 0 10px;
+  border-top:1px solid var(--rule); border-bottom:1px solid var(--rule);
+}
+#cartouche p {
+  margin:0; font-family:var(--font-body); font-size:14px; font-style:italic; color:var(--ink-soft);
+}
+
+#legend {
+  position:fixed; z-index:30; right:26px; top:26px; width:266px;
+  max-height:calc(100vh - 200px); overflow-y:auto; padding:18px 18px 14px;
+  opacity:0; transform:translateY(-12px);
+}
+#legend h2 {
+  margin:0 0 12px; font-family:var(--font-data); font-size:10px; letter-spacing:.34em;
+  text-transform:uppercase; font-weight:400; color:var(--ink-soft);
+}
+#legendList { margin:0; padding:0; list-style:none; }
+#legendList li + li { border-top:1px solid rgba(138,115,80,.34); }
+.legend-row {
+  width:100%; display:flex; align-items:baseline; gap:10px; padding:9px 2px;
+  background:none; border:0; text-align:left; cursor:pointer; color:var(--ink);
+  font-family:var(--font-body); font-size:15px;
+}
+.legend-row:hover, .legend-row:focus-visible { color:#120c06; }
+.legend-row:hover .legend-name { text-decoration:underline; text-underline-offset:3px; }
+.legend-swatch {
+  flex:0 0 auto; width:11px; height:11px; border-radius:2px;
+  border:1px solid rgba(46,32,19,.5); transform:translateY(1px);
+}
+.legend-name { flex:1 1 auto; }
+.legend-count { font-family:var(--font-data); font-size:11px; color:var(--ink-soft); }
+.legend-empty { margin:4px 2px 0; font-family:var(--font-body); font-size:13px; color:var(--ink-soft); line-height:1.5; }
+.link {
+  padding:0; border:0; background:none; cursor:pointer; color:var(--ink);
+  font:inherit; text-decoration:underline; text-underline-offset:3px;
+}
+
+#plate {
+  position:fixed; z-index:31; right:26px; bottom:34px; width:298px;
+  max-height:calc(100vh - 240px); overflow-y:auto; padding:18px 20px 16px;
+}
+#plate.hidden { display:none; }
+#plate h2 {
+  margin:.2em 0 .1em; font-family:var(--font-display); font-weight:400;
+  font-size:27px; line-height:1.05; letter-spacing:.015em;
+}
+.plate-house { margin:0 0 12px; font-family:var(--font-body); font-style:italic; font-size:13px; color:var(--ink-soft); }
+#plateStats { margin:0; padding:12px 0 0; border-top:1px solid rgba(138,115,80,.4); display:grid; gap:7px; }
+.stat-row { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.stat-row dt {
+  font-family:var(--font-data); font-size:10px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--ink-soft);
+}
+.stat-row dd { margin:0; font-family:var(--font-data); font-size:13px; color:var(--ink); }
+.plate-notes {
+  margin:12px 0 0; padding-top:11px; border-top:1px solid rgba(138,115,80,.4);
+  font-family:var(--font-body); font-size:13px; line-height:1.55; color:var(--ink-soft);
+}
+.plate-notes:empty { display:none; }
+.plate-close {
+  position:absolute; top:8px; right:10px; width:24px; height:24px; padding:0;
+  border:0; background:none; cursor:pointer; color:var(--ink-soft);
+  font-family:var(--font-body); font-size:19px; line-height:1;
+}
+.plate-close:hover { color:var(--ink); }
+
+/* Scale bar and survey figures live in the cartouche, where a map keeps them. */
+#marginalia {
+  display:flex; align-items:center; flex-wrap:wrap; gap:6px 16px;
+  margin-top:14px; padding-top:11px; border-top:1px solid rgba(138,115,80,.4);
+  font-family:var(--font-data); font-size:9.5px; letter-spacing:.2em;
+  text-transform:uppercase; color:var(--ink-soft);
+}
+.scale { display:flex; align-items:center; gap:9px; }
+.scale-bar {
+  display:block; width:74px; height:6px;
+  border:1px solid var(--rule); border-top:0;
+}
+
+#settlementTip {
+  position:fixed; z-index:32; pointer-events:none; padding:7px 11px;
+  font-family:var(--font-data); font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+  transform:translate(-50%, calc(-100% - 14px)); white-space:nowrap;
+}
+#settlementTip.hidden { display:none; }
+#settlementTip b { font-family:var(--font-body); font-size:13px; letter-spacing:.02em; text-transform:none; }
+
+.ghost-button {
+  position:fixed; z-index:30; right:26px; bottom:0; padding:9px 15px;
+  border:1px solid rgba(233,220,192,.3); border-bottom:0; border-radius:8px 8px 0 0;
+  background:rgba(20,14,9,.72); color:rgba(233,220,192,.78); cursor:pointer;
+  font-family:var(--font-data); font-size:10px; letter-spacing:.24em; text-transform:uppercase;
+  opacity:0; transition:color .2s ease, border-color .2s ease;
+}
+.ghost-button:hover { color:#f7e7c7; border-color:rgba(233,220,192,.62); }
+body.presenting #plate:not(.hidden) ~ .ghost-button { bottom:auto; top:0; border-radius:0 0 8px 8px; border-bottom:1px solid rgba(233,220,192,.3); border-top:0; }
+
+/* The opening sequence: the map is laid down, then the borders are inked. */
+body.presenting.intro-done #cartouche,
+body.presenting.intro-done #legend { opacity:1; transform:none; transition:opacity .9s ease, transform .9s cubic-bezier(.16,.8,.3,1); }
+body.presenting.intro-done .ghost-button { opacity:1; transition:opacity 1.1s ease .1s; }
+body.presenting #world { opacity:0; }
+body.presenting.stage-lit #world { opacity:1; transition:opacity 1s ease; }
+
+body.presenting .kingdom-fill { transition:fill-opacity .7s ease; }
+body.presenting .kingdom-label { transition:opacity .8s ease, letter-spacing .8s cubic-bezier(.16,.8,.3,1); }
+body.presenting .kingdom-group.dimmed .kingdom-line { opacity:.34; transition:opacity .35s ease; }
+body.presenting .kingdom-fill.dimmed { fill-opacity:.03 !important; }
+body.presenting .kingdom-group.lifted .kingdom-line.main { opacity:1; }
+body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
+
+@media (prefers-reduced-motion: reduce) {
+  body.presenting #world,
+  body.presenting.intro-done #cartouche,
+  body.presenting.intro-done #legend,
+  body.presenting.intro-done .ghost-button { transition:none; }
+}
+
+@media (max-width:900px) {
+  #legend { right:12px; top:12px; width:min(220px, 46vw); max-height:38vh; }
+  #cartouche { left:14px; bottom:14px; padding:14px 18px 12px; }
+  #plate { right:12px; left:12px; width:auto; bottom:14px; max-height:44vh; }
+}
+
 @media (max-width:1100px) {
   #toolbar { top:auto; bottom:8px; left:8px; right:8px; transform:none; max-width:none; }
   #status { bottom:auto; top:8px; left:8px; }
@@ -307,6 +483,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   <button id="importJsonButton" class="tool" type="button">Import Kingdom JSON</button>
   <input id="importJsonInput" type="file" accept=".json,application/json" hidden>
   <div class="separator"></div>
+  <button id="presentButton" class="tool primary" type="button">View map</button>
   <button id="fitButton" class="tool" type="button">Fit Map</button>
   <button id="fullscreenButton" class="tool" type="button">Fullscreen</button>
 </nav>
@@ -406,6 +583,45 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 </section>
 
 <div id="status"><strong id="modeLabel">Move Map</strong> · <span id="countLabel"></span> · <span id="saveState">Ready</span></div>
+
+<!-- Presentation layer. Hidden entirely while the editor is open. -->
+<div id="stage" aria-hidden="false">
+  <figure id="cartouche" class="plate-surface">
+    <figcaption>
+      <span class="cartouche-eyebrow">World map</span>
+      <h1>Merovar</h1>
+      <span class="cartouche-rule" aria-hidden="true"></span>
+      <p id="cartoucheLine">A survey of the realms</p>
+      <div id="marginalia">
+        <span class="scale">
+          <span class="scale-bar" aria-hidden="true"></span>
+          <span id="scaleLabel">500 units</span>
+        </span>
+        <span id="surveyLine"></span>
+      </div>
+    </figcaption>
+  </figure>
+
+  <aside id="legend" class="plate-surface" aria-label="Kingdoms">
+    <h2>Realms</h2>
+    <ol id="legendList"></ol>
+    <p id="legendEmpty" class="legend-empty hidden">
+      No borders drawn yet. <button id="legendEditLink" class="link" type="button">Open the editor</button> to draw one.
+    </p>
+  </aside>
+
+  <section id="plate" class="plate-surface hidden" aria-live="polite">
+    <button id="plateClose" class="plate-close" type="button" aria-label="Close">×</button>
+    <span class="plate-eyebrow">Realm</span>
+    <h2 id="plateName">—</h2>
+    <p id="plateHouse" class="plate-house"></p>
+    <dl id="plateStats"></dl>
+    <p id="plateNotes" class="plate-notes"></p>
+  </section>
+
+  <div id="settlementTip" class="plate-surface hidden" role="status"></div>
+  <button id="openEditor" class="ghost-button" type="button">Editor</button>
+</div>
 
 <div id="nav">
   <button id="zoomOut" type="button" title="Zoom out (−)" aria-label="Zoom out">−</button>
@@ -1542,6 +1758,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     root.setProperty("--k-ink", (INK_SCREEN_PX / scale).toFixed(3));
     root.setProperty("--k-label", (LABEL_SCREEN_PX / scale).toFixed(3));
     root.setProperty("--k-handle", (HANDLE_SCREEN_PX / scale).toFixed(3));
+    if (presenting) updateScaleBar();
     // Handle radii are numeric, so they have to be redrawn when the zoom changes.
     if (selectedId && mode !== "move") renderHandles();
     if (draftPath().length) renderDraft();
@@ -2600,6 +2817,319 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   window.addEventListener("resize", onResize);
   window.visualViewport?.addEventListener("resize", onResize);
 
+  /* ====================================================== presentation mode */
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let presenting = false;
+  let hoveredKingdomId = null;
+
+  const stage = {
+    root: document.getElementById("stage"),
+    legendList: document.getElementById("legendList"),
+    legendEmpty: document.getElementById("legendEmpty"),
+    plate: document.getElementById("plate"),
+    plateName: document.getElementById("plateName"),
+    plateHouse: document.getElementById("plateHouse"),
+    plateStats: document.getElementById("plateStats"),
+    plateNotes: document.getElementById("plateNotes"),
+    cartoucheLine: document.getElementById("cartoucheLine"),
+    surveyLine: document.getElementById("surveyLine"),
+    scaleLabel: document.getElementById("scaleLabel"),
+    tip: document.getElementById("settlementTip"),
+  };
+
+  const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+  // Eased camera move. Used for the opening settle and for framing a realm.
+  let flight = null;
+  function flyTo(target, duration = 900) {
+    if (reduceMotion || duration <= 0) {
+      scale = target.scale; offsetX = target.x; offsetY = target.y;
+      applyTransform();
+      return;
+    }
+    const from = { scale, x: offsetX, y: offsetY };
+    const started = performance.now();
+    flight = (now) => {
+      const t = clamp((now - started) / duration, 0, 1);
+      const k = easeInOut(t);
+      scale = from.scale + (target.scale - from.scale) * k;
+      offsetX = from.x + (target.x - from.x) * k;
+      offsetY = from.y + (target.y - from.y) * k;
+      applyTransform();
+      if (t < 1) requestAnimationFrame(flight);
+      else flight = null;
+    };
+    requestAnimationFrame(flight);
+  }
+
+  function fitView(padding = 16, maxScale = Infinity) {
+    const { w, h } = viewSize();
+    const next = Math.min((w - padding * 2) / MAP_WIDTH, (h - padding * 2) / MAP_HEIGHT, maxScale);
+    return { scale: next, x: (w - MAP_WIDTH * next) / 2, y: (h - MAP_HEIGHT * next) / 2 };
+  }
+
+  function frameBox(box, maxScale = 2.4) {
+    const { w, h } = viewSize();
+    const pad = 90;
+    const next = clamp(
+      Math.min((w - pad * 2) / Math.max(box.width, 1), (h - pad * 2) / Math.max(box.height, 1)),
+      MIN_SCALE, maxScale);
+    return {
+      scale: next,
+      x: w / 2 - (box.minX + box.width / 2) * next,
+      y: h / 2 - (box.minY + box.height / 2) * next,
+    };
+  }
+
+  // The signature moment: each realm's outline draws itself, the wash floods in
+  // behind it, then the name settles.
+  function inkKingdoms() {
+    const groups = kingdoms.map(kingdom => nodes.get(kingdom.id)).filter(Boolean);
+    groups.forEach((entry, index) => {
+      const lines = [entry.halo, entry.under, entry.main];
+      const targetFill = entry.fill.getAttribute("fill-opacity");
+      entry.fill.setAttribute("fill-opacity", "0");
+      entry.label.style.opacity = "0";
+      entry.label.style.letterSpacing = "0.5em";
+
+      if (reduceMotion) {
+        entry.fill.setAttribute("fill-opacity", targetFill);
+        entry.label.style.opacity = "";
+        entry.label.style.letterSpacing = "";
+        return;
+      }
+
+      const delay = 620 + index * 170;
+      lines.forEach(line => {
+        const length = line.getTotalLength ? line.getTotalLength() : 0;
+        if (!length) return;
+        line.style.transition = "none";
+        line.style.strokeDasharray = `${length}`;
+        line.style.strokeDashoffset = `${length}`;
+        // Two frames so the starting offset is committed before it animates.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          line.style.transition = `stroke-dashoffset 1150ms cubic-bezier(.32,.7,.28,1) ${delay}ms`;
+          line.style.strokeDashoffset = "0";
+        }));
+      });
+
+      setTimeout(() => { entry.fill.setAttribute("fill-opacity", targetFill); }, delay + 620);
+      setTimeout(() => {
+        entry.label.style.opacity = "";
+        entry.label.style.letterSpacing = "";
+      }, delay + 850);
+      // Dash arrays would fight the hover styles once the sequence is over.
+      setTimeout(() => {
+        lines.forEach(line => {
+          line.style.transition = "";
+          line.style.strokeDasharray = "";
+          line.style.strokeDashoffset = "";
+        });
+      }, delay + 1900);
+    });
+  }
+
+  function playIntro() {
+    const settled = fitView();
+    // Start a touch closer, so the map settles rather than simply appearing.
+    scale = settled.scale * 1.07;
+    offsetX = settled.x - (MAP_WIDTH * (settled.scale * 1.07 - settled.scale)) / 2;
+    offsetY = settled.y - (MAP_HEIGHT * (settled.scale * 1.07 - settled.scale)) / 2;
+    applyTransform();
+
+    requestAnimationFrame(() => {
+      document.body.classList.add("stage-lit");
+      flyTo(settled, reduceMotion ? 0 : 1500);
+      inkKingdoms();
+      setTimeout(() => document.body.classList.add("intro-done"), reduceMotion ? 0 : 900);
+    });
+  }
+
+  function kingdomSummary(kingdom) {
+    const record = kingdomRecord(kingdom);
+    const inside = settlementsInside(kingdom);
+    const counts = inside.reduce((acc, item) => {
+      acc[item.type] = (acc[item.type] || 0) + 1;
+      return acc;
+    }, {});
+    return { record, inside, counts };
+  }
+
+  function renderLegend() {
+    stage.legendList.textContent = "";
+    stage.legendEmpty.classList.toggle("hidden", kingdoms.length > 0);
+    kingdoms.forEach(kingdom => {
+      const { inside } = kingdomSummary(kingdom);
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "legend-row";
+      button.dataset.kingdomRow = kingdom.id;
+
+      const swatch = document.createElement("span");
+      swatch.className = "legend-swatch";
+      swatch.style.background = kingdom.fillColor;
+      swatch.style.borderColor = kingdom.borderColor;
+
+      const name = document.createElement("span");
+      name.className = "legend-name";
+      name.textContent = kingdom.name || "Unnamed realm";
+
+      const count = document.createElement("span");
+      count.className = "legend-count";
+      count.textContent = String(inside.length);
+
+      button.append(swatch, name, count);
+      button.addEventListener("click", () => showKingdomPlate(kingdom.id, true));
+      button.addEventListener("pointerenter", () => emphasise(kingdom.id));
+      button.addEventListener("pointerleave", () => emphasise(null));
+      li.appendChild(button);
+      stage.legendList.appendChild(li);
+    });
+
+    const totals = settlements.reduce((acc, item) => {
+      acc[item.type] = (acc[item.type] || 0) + 1;
+      return acc;
+    }, {});
+    stage.surveyLine.textContent =
+      `${totals.city || 0} cities · ${totals.town || 0} towns · ${totals.castle || 0} castles`;
+    stage.cartoucheLine.textContent = kingdoms.length
+      ? `${kingdoms.length} realm${kingdoms.length === 1 ? "" : "s"} surveyed`
+      : "A survey of the realms";
+  }
+
+  // Hovering a realm lifts its ink and lets the others recede.
+  function emphasise(id) {
+    hoveredKingdomId = id;
+    nodes.forEach((entry, kingdomId) => {
+      const lifted = id !== null && kingdomId === id;
+      const dimmed = id !== null && kingdomId !== id;
+      entry.strokeGroup.classList.toggle("lifted", lifted);
+      entry.strokeGroup.classList.toggle("dimmed", dimmed);
+      entry.fill.classList.toggle("dimmed", dimmed);
+      entry.label.classList.toggle("dimmed", dimmed);
+    });
+  }
+
+  function showKingdomPlate(id, fly = false) {
+    const kingdom = byId(id);
+    if (!kingdom) return;
+    const { record, inside, counts } = kingdomSummary(kingdom);
+    const capital = settlements.find(item => item.id === kingdom.capitalId);
+
+    stage.plateName.textContent = kingdom.name || "Unnamed realm";
+    stage.plateHouse.textContent = kingdom.rulingHouse ? `House ${kingdom.rulingHouse}` : "";
+    stage.plateHouse.style.display = kingdom.rulingHouse ? "" : "none";
+
+    const rows = [
+      ["Settlements", String(inside.length)],
+      ["Cities", String(counts.city || 0)],
+      ["Towns", String(counts.town || 0)],
+      ["Castles", String(counts.castle || 0)],
+      ["Landmasses", String(kingdom.parts.length)],
+      ["Area", `${(record.geometry.areaSquareUnits / 1000).toFixed(0)}k sq units`],
+    ];
+    if (capital) {
+      const capitalIndex = settlements.filter(s => s.type === capital.type).indexOf(capital) + 1;
+      rows.unshift(["Capital", capital.name || `${capitalize(capital.type)} ${capitalIndex}`]);
+    }
+    stage.plateStats.textContent = "";
+    rows.forEach(([label, value]) => {
+      const row = document.createElement("div");
+      row.className = "stat-row";
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      row.append(dt, dd);
+      stage.plateStats.appendChild(row);
+    });
+    stage.plateNotes.textContent = kingdom.notes || "";
+    stage.plate.classList.remove("hidden");
+    emphasise(id);
+    if (fly) flyTo(frameBox(geometryFor(kingdom).box), 1000);
+    window.dispatchEvent(new CustomEvent("merovar:kingdom-click", { detail: { ...clone(record), source: "stage" } }));
+  }
+
+  function hideKingdomPlate() {
+    stage.plate.classList.add("hidden");
+    emphasise(null);
+    flyTo(fitView(), 800);
+  }
+
+  function updateScaleBar() {
+    // The bar is 74px wide; report what that spans in map units at this zoom.
+    const units = Math.round(74 / scale / 50) * 50 || 50;
+    stage.scaleLabel.textContent = `${units} units`;
+  }
+
+  function setPresenting(on) {
+    presenting = on;
+    document.body.classList.toggle("presenting", on);
+    stage.root.setAttribute("aria-hidden", String(!on));
+    if (on) {
+      setMode("move");
+      deselect();
+      deselectSettlement();
+      renderLegend();
+      updateScaleBar();
+    } else {
+      emphasise(null);
+      stage.plate.classList.add("hidden");
+      stage.tip.classList.add("hidden");
+    }
+  }
+
+  // Presentation interactions live on the stage, not the editor's click handler.
+  dom.viewport.addEventListener("pointermove", event => {
+    if (!presenting) return;
+    const el = document.elementFromPoint(event.clientX, event.clientY);
+    const settlementEl = el?.closest('[data-map-entity="settlement"]');
+    if (settlementEl) {
+      const item = settlementById(settlementEl.dataset.settlementId);
+      if (item) {
+        const index = settlements.filter(s => s.type === item.type).indexOf(item) + 1;
+        stage.tip.innerHTML = "";
+        const strong = document.createElement("b");
+        strong.textContent = item.name || `${capitalize(item.type)} ${index}`;
+        const meta = document.createElement("span");
+        meta.textContent = ` · ${Math.round(item.x)}, ${Math.round(item.y)}`;
+        stage.tip.append(strong, meta);
+        stage.tip.style.left = `${event.clientX}px`;
+        stage.tip.style.top = `${event.clientY - 8}px`;
+        stage.tip.classList.remove("hidden");
+      }
+    } else {
+      stage.tip.classList.add("hidden");
+    }
+
+    const kingdomEl = el?.closest('[data-map-entity="kingdom"]');
+    const id = kingdomEl?.dataset.kingdomId ?? null;
+    if (id !== hoveredKingdomId && !stage.plate.matches(":not(.hidden)")) emphasise(id);
+  });
+
+  dom.viewport.addEventListener("pointerleave", () => {
+    if (!presenting) return;
+    stage.tip.classList.add("hidden");
+  });
+
+  dom.viewport.addEventListener("click", event => {
+    if (!presenting || pointerMoved) return;
+    const el = document.elementFromPoint(event.clientX, event.clientY);
+    const kingdomEl = el?.closest('[data-map-entity="kingdom"]');
+    if (kingdomEl) { showKingdomPlate(kingdomEl.dataset.kingdomId, true); return; }
+    if (!el?.closest('[data-map-entity="settlement"]')) hideKingdomPlate();
+  }, true);
+
+  document.getElementById("presentButton").addEventListener("click", () => {
+    setPresenting(true);
+    playIntro();
+  });
+  document.getElementById("plateClose").addEventListener("click", hideKingdomPlate);
+  document.getElementById("openEditor").addEventListener("click", () => setPresenting(false));
+  document.getElementById("legendEditLink").addEventListener("click", () => setPresenting(false));
+
   /* ================================================================== APIs */
 
   window.MerovarMapAPI = Object.freeze({
@@ -2657,6 +3187,22 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   updateKingdomManifest();
   setMode("move");
   fitMap();
+
+  // The showcase is what the site opens with; ?edit=1 goes straight to the tools.
+  const wantsEditor = new URLSearchParams(location.search).has("edit");
+  if (wantsEditor) {
+    setPresenting(false);
+  } else {
+    setPresenting(true);
+    playIntro();
+  }
+
+  window.MerovarStage = Object.freeze({
+    present: () => { setPresenting(true); playIntro(); },
+    edit: () => setPresenting(false),
+    focus: id => showKingdomPlate(id, true),
+    isPresenting: () => presenting,
+  });
 })();
 </script>
 </body></html>
