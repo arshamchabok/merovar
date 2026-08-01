@@ -1,0 +1,1714 @@
+<!--
+  Source shell for index.html.
+
+  The three huge inline payloads (map image, settlement icon library, settlement
+  records) are NOT stored here — `npm run build` copies them byte-for-byte out of
+  the existing index.html into the placeholders below. Edit this file, run the
+  build, and index.html is regenerated as a standalone document.
+-->
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Merovar — World Map &amp; Kingdom Borders</title>
+<style>
+:root {
+  color-scheme: dark;
+  --panel: rgba(25,18,13,.94);
+  --panel2: rgba(41,30,22,.97);
+  --border: rgba(255,235,202,.24);
+  --text: #f7e7c7;
+  --muted: #cdb791;
+  --accent: #d4a85f;
+  --good: #9bd39b;
+}
+* { box-sizing: border-box; }
+html, body {
+  width:100%; height:100%; margin:0; overflow:hidden;
+  background:#0b0907; color:var(--text);
+  font-family:Georgia,"Times New Roman",serif;
+}
+body { touch-action:none; user-select:none; }
+button,input,textarea,select { font:inherit; }
+button { color:inherit; }
+
+/* ---------------------------------------------------------------- map stage */
+#viewport {
+  position:fixed; inset:0; overflow:hidden; cursor:grab;
+  background:radial-gradient(circle at center,#4b3522 0%,#1d140f 66%,#080605 100%);
+}
+#viewport.dragging { cursor:grabbing; }
+#viewport.drawing { cursor:crosshair; }
+#viewport.picking { cursor:copy; }
+#world {
+  position:absolute; left:0; top:0; width:3840px; height:1645px;
+  transform-origin:0 0; will-change:transform;
+}
+#map {
+  position:absolute; inset:0; width:3840px; height:1645px; display:block;
+  pointer-events:none; -webkit-user-drag:none; image-rendering:auto;
+}
+
+/* Layer order inside #world:
+   map image -> kingdom fills -> kingdom lines + names -> settlements -> edit handles */
+#kingdomLayer, #kingdomEditLayer {
+  position:absolute; inset:0; width:3840px; height:1645px;
+  overflow:visible; pointer-events:none;
+}
+#settlementLayer {
+  position:absolute; inset:0; width:3840px; height:1645px;
+  pointer-events:none;
+}
+
+/* ------------------------------------------------------------- settlements */
+.settlement {
+  position:absolute; transform-origin:50% 100%; pointer-events:auto;
+  cursor:pointer; isolation:isolate; touch-action:none;
+}
+.settlement img {
+  width:100%; height:auto; display:block; pointer-events:none; -webkit-user-drag:none;
+  filter:drop-shadow(0 2px 1.5px rgba(55,35,19,.26));
+  opacity:.985;
+}
+body.locked-settlements .settlement { pointer-events:none; }
+
+/* --------------------------------------------------------- kingdom artwork */
+.kingdom-fill {
+  pointer-events:fill; cursor:pointer;
+  transition:fill-opacity .18s ease;
+}
+.kingdom-line {
+  fill:none; stroke-linejoin:round; stroke-linecap:round; pointer-events:none;
+  stroke-width:calc(var(--k-ink,3) * 1px);
+}
+.kingdom-line.halo {
+  stroke-width:calc(var(--k-ink,3) * 2.4px);
+  opacity:.16;
+}
+.kingdom-line.under {
+  stroke-width:calc(var(--k-ink,3) * .75px);
+  opacity:.5;
+}
+.kingdom-line.main { opacity:.88; }
+.kingdom-group.is-hover .kingdom-line.main { opacity:.97; }
+.kingdom-group.is-hover .kingdom-line.halo { opacity:.3; }
+.kingdom-group.is-selected .kingdom-line.main { opacity:1; }
+.kingdom-group.is-selected .kingdom-line.halo { opacity:.34; }
+.kingdom-label {
+  pointer-events:none; text-anchor:middle; dominant-baseline:middle;
+  font-family:Georgia,"Times New Roman",serif; font-style:italic;
+  font-size:calc(var(--k-label,60) * 1px);
+  letter-spacing:calc(var(--k-label,60) * .07px);
+  paint-order:stroke fill;
+  stroke:rgba(246,234,206,.5);
+  stroke-width:calc(var(--k-label,60) * .1px);
+  stroke-linejoin:round;
+  opacity:.78;
+}
+.kingdom-group.is-hover .kingdom-label, .kingdom-group.is-selected .kingdom-label { opacity:.95; }
+body.hide-borders #kingdomLayer, body.hide-borders #kingdomEditLayer { display:none; }
+body.hide-names .kingdom-label { display:none; }
+.kingdom-hidden { display:none; }
+
+/* ------------------------------------------------------------ edit handles */
+.draft-line {
+  fill:rgba(212,168,95,.07); stroke:rgba(244,213,152,.85);
+  stroke-width:calc(var(--k-ink,3) * 1px);
+  stroke-dasharray:calc(var(--k-ink,3) * 4px) calc(var(--k-ink,3) * 3px);
+  stroke-linejoin:round; pointer-events:none;
+}
+.vertex {
+  fill:rgba(28,20,14,.85); stroke:#f4d598;
+  stroke-width:calc(var(--k-handle,10) * .22px);
+  pointer-events:all; cursor:grab;
+}
+.vertex:hover { fill:#f4d598; }
+.vertex.dragging { cursor:grabbing; fill:#f4d598; }
+.midpoint {
+  fill:rgba(244,213,152,.28); stroke:rgba(244,213,152,.8);
+  stroke-width:calc(var(--k-handle,10) * .16px);
+  pointer-events:all; cursor:copy;
+}
+.midpoint:hover { fill:#f4d598; }
+body.mode-delpoint .vertex { cursor:not-allowed; stroke:#ef8d7c; }
+body.mode-delpoint .midpoint { display:none; }
+body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
+
+/* -------------------------------------------------------------------- chrome */
+#toolbar {
+  position:fixed; z-index:50; left:50%; top:10px; transform:translateX(-50%);
+  display:flex; align-items:center; gap:6px; max-width:calc(100vw - 20px); overflow-x:auto;
+  padding:8px; border:1px solid var(--border); border-radius:14px;
+  background:var(--panel); box-shadow:0 16px 48px rgba(0,0,0,.46); backdrop-filter:blur(14px);
+  scrollbar-width:thin;
+}
+.tool {
+  flex:0 0 auto; min-height:36px; padding:0 11px; border:1px solid transparent;
+  border-radius:8px; background:rgba(255,239,213,.08); cursor:pointer; white-space:nowrap;
+}
+.tool:hover { background:rgba(255,239,213,.15); }
+.tool.active { border-color:rgba(255,245,218,.70); background:rgba(212,168,95,.25); }
+.tool:disabled { opacity:.4; cursor:not-allowed; }
+.tool.danger { background:rgba(193,61,49,.26); }
+.tool.primary { background:rgba(155,211,155,.22); }
+.separator { flex:0 0 auto; width:1px; height:28px; background:var(--border); }
+.control {
+  display:flex; align-items:center; gap:6px; flex:0 0 auto;
+  color:var(--muted); font-size:12px; white-space:nowrap;
+}
+
+#inspector {
+  position:fixed; z-index:55; right:12px; top:66px; width:min(340px,calc(100vw - 24px));
+  max-height:calc(100vh - 150px); overflow-y:auto;
+  padding:14px; border:1px solid var(--border); border-radius:12px;
+  background:var(--panel2); box-shadow:0 18px 50px rgba(0,0,0,.45); backdrop-filter:blur(14px);
+}
+#inspector.hidden { display:none; }
+#inspector h2 { margin:0 0 2px; font-size:18px; }
+.inspector-sub { margin:0 0 6px; color:var(--muted); font-size:12px; }
+.field { display:grid; gap:5px; margin-top:9px; color:var(--muted); font-size:12px; }
+.field input,.field textarea,.field select {
+  width:100%; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.06);
+  color:var(--text); padding:8px 9px; outline:none;
+}
+.field input:focus,.field textarea:focus,.field select:focus { border-color:var(--accent); }
+.field input[type="color"] { height:36px; padding:2px; cursor:pointer; }
+.field input[type="range"] { padding:0; }
+.field textarea { min-height:58px; resize:vertical; }
+.inline-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.inspector-actions { display:flex; justify-content:space-between; gap:8px; margin-top:12px; }
+
+#status {
+  position:fixed; z-index:49; left:12px; bottom:12px; max-width:min(760px,calc(100vw - 24px));
+  padding:9px 12px; border:1px solid var(--border); border-radius:10px; background:var(--panel);
+  color:var(--muted); font-size:13px; pointer-events:none; backdrop-filter:blur(12px);
+}
+#status strong { color:var(--text); }
+#saveState { color:var(--good); }
+
+#nav {
+  position:fixed; z-index:20; right:14px; bottom:14px;
+  display:flex; gap:6px; padding:6px;
+  border:1px solid var(--border); border-radius:12px;
+  background:rgba(25,18,13,.86); box-shadow:0 12px 32px rgba(0,0,0,.42);
+  backdrop-filter:blur(12px); opacity:.55; transition:opacity .18s ease;
+}
+#nav:hover, #nav:focus-within { opacity:1; }
+#nav button {
+  width:36px; height:36px; padding:0;
+  display:flex; align-items:center; justify-content:center;
+  border:1px solid transparent; border-radius:8px;
+  background:transparent; color:var(--text);
+  font:600 17px/1 Georgia,"Times New Roman",serif; cursor:pointer;
+}
+#nav button:hover { background:rgba(212,168,95,.18); border-color:var(--border); }
+
+@media (max-width:1100px) {
+  #toolbar { top:auto; bottom:8px; left:8px; right:8px; transform:none; max-width:none; }
+  #status { bottom:auto; top:8px; left:8px; }
+  #inspector { top:8px; right:8px; max-height:calc(100vh - 90px); }
+  #nav { bottom:64px; }
+}
+</style>
+</head>
+<body class="locked-settlements">
+
+<nav id="toolbar" aria-label="Kingdom border editor controls">
+  <button class="tool active" data-mode="move" type="button">Move Map</button>
+  <button class="tool" data-mode="draw" type="button">Draw Kingdom</button>
+  <button class="tool" data-mode="edit" type="button">Select / Edit Border</button>
+  <button class="tool" data-mode="addpoint" type="button">Add Point</button>
+  <button class="tool" data-mode="delpoint" type="button">Delete Point</button>
+  <div class="separator"></div>
+  <button id="finishButton" class="tool primary" type="button" disabled>Finish</button>
+  <button id="cancelButton" class="tool" type="button" disabled>Cancel</button>
+  <div class="separator"></div>
+  <button id="undoButton" class="tool" type="button" disabled>Undo</button>
+  <button id="redoButton" class="tool" type="button" disabled>Redo</button>
+  <button id="deleteKingdomButton" class="tool danger" type="button" disabled>Delete Kingdom</button>
+  <div class="separator"></div>
+  <label class="control"><input id="showBorders" type="checkbox" checked> Borders</label>
+  <label class="control"><input id="showNames" type="checkbox" checked> Names</label>
+  <div class="separator"></div>
+  <button id="saveButton" class="tool" type="button">Save</button>
+  <button id="saveHtmlButton" class="tool" type="button">Save Edited HTML</button>
+  <button id="exportJsonButton" class="tool" type="button">Export Kingdom JSON</button>
+  <button id="importJsonButton" class="tool" type="button">Import Kingdom JSON</button>
+  <input id="importJsonInput" type="file" accept=".json,application/json" hidden>
+  <div class="separator"></div>
+  <button id="fitButton" class="tool" type="button">Fit Map</button>
+  <button id="fullscreenButton" class="tool" type="button">Fullscreen</button>
+</nav>
+
+<main id="viewport">
+  <div id="world">
+<!--MEROVAR:MAP_IMG-->
+    <svg id="kingdomLayer" viewBox="0 0 3840 1645" aria-hidden="true">
+      <defs>
+        <!-- Optional extra ink grain. Left disconnected on purpose: at 8x zoom the
+             browser has to rasterise this filter over a very large surface, which
+             stutters on an 18 MB page. The wobble in the path geometry already
+             carries the hand-drawn look. To enable, add filter="url(#inkTexture)"
+             to #kingdomStrokes below. -->
+        <filter id="inkTexture" x="-6%" y="-6%" width="112%" height="112%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.014" numOctaves="2" seed="7" result="noise"/>
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.4" xChannelSelector="R" yChannelSelector="G"/>
+        </filter>
+      </defs>
+      <g id="kingdomFills"></g>
+      <g id="kingdomStrokes"></g>
+      <g id="kingdomLabels"></g>
+    </svg>
+    <div id="settlementLayer"></div>
+    <svg id="kingdomEditLayer" viewBox="0 0 3840 1645" aria-hidden="true">
+      <g id="draftGroup"></g>
+      <g id="handleGroup"></g>
+    </svg>
+  </div>
+</main>
+
+<section id="inspector" class="hidden" aria-label="Kingdom properties">
+  <h2 id="inspectorTitle">Kingdom</h2>
+  <p class="inspector-sub" id="inspectorMeta"></p>
+  <label class="field">Name<input id="editName" type="text" maxlength="80" placeholder="Kingdom name"></label>
+  <label class="field">Ruling house<input id="editHouse" type="text" maxlength="80" placeholder="Optional"></label>
+  <label class="field">Capital settlement
+    <select id="editCapital"><option value="">None</option></select>
+  </label>
+  <div class="inline-fields">
+    <label class="field">Border colour<input id="editBorderColor" type="color"></label>
+    <label class="field">Fill colour<input id="editFillColor" type="color"></label>
+  </div>
+  <label class="field">Fill opacity <span id="fillOpacityValue"></span>
+    <input id="editFillOpacity" type="range" min="0" max="0.45" step="0.01">
+  </label>
+  <label class="field">Notes<textarea id="editNotes" placeholder="Optional notes"></textarea></label>
+  <div class="inspector-actions">
+    <button id="duplicateButton" class="tool" type="button">Duplicate</button>
+    <button id="deleteButton" class="tool danger" type="button">Delete</button>
+    <button id="closeInspectorButton" class="tool" type="button">Close</button>
+  </div>
+</section>
+
+<div id="status"><strong id="modeLabel">Move Map</strong> · <span id="countLabel"></span> · <span id="saveState">Ready</span></div>
+
+<div id="nav">
+  <button id="zoomOut" type="button" title="Zoom out (−)" aria-label="Zoom out">−</button>
+  <button id="zoomIn" type="button" title="Zoom in (+)" aria-label="Zoom in">+</button>
+  <button id="navFit" type="button" title="Fit map (0)" aria-label="Fit map">⤢</button>
+  <button id="navFull" type="button" title="Fullscreen (F)" aria-label="Fullscreen">⛶</button>
+</div>
+
+<!--MEROVAR:ICON_LIBRARY-->
+<!--MEROVAR:SETTLEMENT_DATA-->
+<!--MEROVAR:KINGDOM_DATA-->
+<script id="merovarSettlementManifest" type="application/json">{}</script>
+<script id="merovarKingdomManifest" type="application/json">{}</script>
+<script>
+(() => {
+  "use strict";
+
+  const MAP_WIDTH = 3840;
+  const MAP_HEIGHT = 1645;
+  const MIN_SCALE = 0.08;
+  const MAX_SCALE = 8;
+  const KINGDOM_STORAGE_KEY = "merovar-kingdom-borders-v1";
+
+  // On-screen sizes (CSS px) that stay constant regardless of zoom.
+  const INK_SCREEN_PX = 1.7;
+  const LABEL_SCREEN_PX = 17;
+  const HANDLE_SCREEN_PX = 6;
+
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const uid = (prefix) =>
+    `${prefix}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
+
+  const iconLibrary = JSON.parse(document.getElementById("iconLibraryData").textContent);
+  const settlements = JSON.parse(document.getElementById("embeddedSettlementData").textContent || "[]");
+
+  // Muted ink/wash pairs; new kingdoms cycle through them.
+  const PALETTE = [
+    { border: "#4a3527", fill: "#8a6a4e" },
+    { border: "#33402f", fill: "#5d6b52" },
+    { border: "#3b2f45", fill: "#6b5a76" },
+    { border: "#472b2a", fill: "#7a5350" },
+    { border: "#2c3a42", fill: "#4f6470" },
+    { border: "#4a3d21", fill: "#7d6b3f" },
+    { border: "#2f403a", fill: "#566b62" },
+    { border: "#402c35", fill: "#6d4f5c" },
+  ];
+
+  const dom = {
+    viewport: document.getElementById("viewport"),
+    world: document.getElementById("world"),
+    kingdomLayer: document.getElementById("kingdomLayer"),
+    editLayer: document.getElementById("kingdomEditLayer"),
+    fills: document.getElementById("kingdomFills"),
+    strokes: document.getElementById("kingdomStrokes"),
+    labels: document.getElementById("kingdomLabels"),
+    draftGroup: document.getElementById("draftGroup"),
+    handleGroup: document.getElementById("handleGroup"),
+    settlementLayer: document.getElementById("settlementLayer"),
+    settlementManifest: document.getElementById("merovarSettlementManifest"),
+    kingdomManifest: document.getElementById("merovarKingdomManifest"),
+    inspector: document.getElementById("inspector"),
+    inspectorTitle: document.getElementById("inspectorTitle"),
+    inspectorMeta: document.getElementById("inspectorMeta"),
+    editName: document.getElementById("editName"),
+    editHouse: document.getElementById("editHouse"),
+    editCapital: document.getElementById("editCapital"),
+    editBorderColor: document.getElementById("editBorderColor"),
+    editFillColor: document.getElementById("editFillColor"),
+    editFillOpacity: document.getElementById("editFillOpacity"),
+    fillOpacityValue: document.getElementById("fillOpacityValue"),
+    editNotes: document.getElementById("editNotes"),
+    finishButton: document.getElementById("finishButton"),
+    cancelButton: document.getElementById("cancelButton"),
+    undoButton: document.getElementById("undoButton"),
+    redoButton: document.getElementById("redoButton"),
+    deleteKingdomButton: document.getElementById("deleteKingdomButton"),
+    showBorders: document.getElementById("showBorders"),
+    showNames: document.getElementById("showNames"),
+    modeLabel: document.getElementById("modeLabel"),
+    countLabel: document.getElementById("countLabel"),
+    saveState: document.getElementById("saveState"),
+  };
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const svgEl = (name) => document.createElementNS(SVG_NS, name);
+
+  let kingdoms = [];
+  let scale = 1, offsetX = 0, offsetY = 0;
+  let userAdjustedView = false;
+  let mode = "move";
+  let selectedId = null;
+  let draftPoints = null;
+  let lastDraftClickAt = 0;
+  const undoStack = [];
+  const redoStack = [];
+
+  /* ====================================================== geometry helpers */
+
+  function hashSeed(text) {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+
+  function makeRandom(seed) {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
+  }
+
+  // Walks the polygon and lets the line wander sideways so the outline reads as
+  // an inked stroke rather than a vector polygon. The wander is a damped random
+  // walk — low frequency, like a hand drifting — rather than per-sample noise,
+  // which would just look like jitter. Deterministic per kingdom id.
+  function roughenPolygon(points, seed, amplitudeScale = 1) {
+    const random = makeRandom(seed);
+    const out = [];
+    const count = points.length;
+    for (let i = 0; i < count; i += 1) {
+      const a = points[i];
+      const b = points[(i + 1) % count];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const steps = clamp(Math.round(length / 48), 2, 20);
+      const nx = -dy / length;
+      const ny = dx / length;
+      const amp = clamp(length * 0.024, 5, 26) * amplitudeScale;
+
+      let wander = 0;
+      for (let step = 0; step < steps; step += 1) {
+        const t = step / steps;
+        wander = wander * 0.55 + (random() - 0.5) * 2 * 0.45;
+        // Taper to zero at the corners so the vertices stay exactly where placed.
+        const taper = Math.sin(Math.PI * t);
+        const offset = wander * 1.9 * amp * taper;
+        out.push({ x: a.x + dx * t + nx * offset, y: a.y + dy * t + ny * offset });
+      }
+    }
+    return out;
+  }
+
+  // Closed Catmull-Rom spline expressed as cubic beziers.
+  function smoothClosedPath(points) {
+    const n = points.length;
+    if (n < 3) return "";
+    let d = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+    for (let i = 0; i < n; i += 1) {
+      const p0 = points[(i - 1 + n) % n];
+      const p1 = points[i];
+      const p2 = points[(i + 1) % n];
+      const p3 = points[(i + 2) % n];
+      const c1x = p1.x + (p2.x - p0.x) / 6;
+      const c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6;
+      const c2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+    }
+    return `${d} Z`;
+  }
+
+  function pointInPolygon(x, y, points) {
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+      const xi = points[i].x, yi = points[i].y;
+      const xj = points[j].x, yj = points[j].y;
+      const intersects = (yi > y) !== (yj > y) &&
+        x < ((xj - xi) * (y - yi)) / (yj - yi || 1e-9) + xi;
+      if (intersects) inside = !inside;
+    }
+    return inside;
+  }
+
+  function distanceToSegment(px, py, a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSq = dx * dx + dy * dy;
+    const t = lengthSq ? clamp(((px - a.x) * dx + (py - a.y) * dy) / lengthSq, 0, 1) : 0;
+    return Math.hypot(px - (a.x + dx * t), py - (a.y + dy * t));
+  }
+
+  function distanceToEdges(x, y, points) {
+    let min = Infinity;
+    for (let i = 0; i < points.length; i += 1) {
+      const d = distanceToSegment(x, y, points[i], points[(i + 1) % points.length]);
+      if (d < min) min = d;
+    }
+    return min;
+  }
+
+  function boundingBox(points) {
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+  }
+
+  function polygonArea(points) {
+    let sum = 0;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+      sum += (points[j].x + points[i].x) * (points[j].y - points[i].y);
+    }
+    return Math.abs(sum / 2);
+  }
+
+  function centroid(points) {
+    const sum = points.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+    return { x: sum.x / points.length, y: sum.y / points.length };
+  }
+
+  // Approximate pole of inaccessibility: the interior point furthest from any
+  // edge. Keeps names inside concave territories instead of outside them.
+  function labelAnchor(points) {
+    const box = boundingBox(points);
+    let best = centroid(points);
+    let bestDistance = pointInPolygon(best.x, best.y, points) ? distanceToEdges(best.x, best.y, points) : -1;
+    let stepX = box.width / 12;
+    let stepY = box.height / 12;
+    for (let pass = 0; pass < 4; pass += 1) {
+      const originX = pass === 0 ? box.minX : best.x - stepX * 2;
+      const originY = pass === 0 ? box.minY : best.y - stepY * 2;
+      const cols = pass === 0 ? 13 : 5;
+      for (let ix = 0; ix <= cols; ix += 1) {
+        for (let iy = 0; iy <= cols; iy += 1) {
+          const x = originX + stepX * ix;
+          const y = originY + stepY * iy;
+          if (!pointInPolygon(x, y, points)) continue;
+          const d = distanceToEdges(x, y, points);
+          if (d > bestDistance) { bestDistance = d; best = { x, y }; }
+        }
+      }
+      stepX /= 3; stepY /= 3;
+    }
+    return { point: best, clearance: Math.max(bestDistance, 0) };
+  }
+
+  /* ========================================================= kingdom model */
+
+  function normaliseKingdom(raw, index) {
+    const palette = PALETTE[index % PALETTE.length];
+    const points = (Array.isArray(raw.points) ? raw.points : [])
+      .map(p => ({ x: Number(p.x), y: Number(p.y) }))
+      .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+    return {
+      id: typeof raw.id === "string" && raw.id ? raw.id : uid("kingdom"),
+      name: typeof raw.name === "string" ? raw.name : `Kingdom ${index + 1}`,
+      points,
+      borderColor: /^#[0-9a-f]{6}$/i.test(raw.borderColor || "") ? raw.borderColor : palette.border,
+      fillColor: /^#[0-9a-f]{6}$/i.test(raw.fillColor || "") ? raw.fillColor : palette.fill,
+      fillOpacity: clamp(Number(raw.fillOpacity ?? 0.1) || 0, 0, 0.45),
+      notes: typeof raw.notes === "string" ? raw.notes : "",
+      rulingHouse: typeof raw.rulingHouse === "string" ? raw.rulingHouse : "",
+      capitalId: typeof raw.capitalId === "string" ? raw.capitalId : "",
+      hidden: raw.hidden === true,
+    };
+  }
+
+  function loadKingdoms() {
+    let embedded = { savedAt: 0, kingdoms: [] };
+    try {
+      const parsed = JSON.parse(document.getElementById("embeddedKingdomData")?.textContent || "{}");
+      if (Array.isArray(parsed)) embedded = { savedAt: 0, kingdoms: parsed };
+      else if (Array.isArray(parsed.kingdoms)) embedded = { savedAt: Number(parsed.savedAt) || 0, kingdoms: parsed.kingdoms };
+    } catch (error) { /* fall through to defaults */ }
+
+    let stored = null;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(KINGDOM_STORAGE_KEY) || "null");
+      if (parsed && Array.isArray(parsed.kingdoms)) stored = parsed;
+    } catch (error) { stored = null; }
+
+    // A freshly exported HTML wins over an older browser autosave.
+    const source = stored && Number(stored.savedAt) >= embedded.savedAt ? stored.kingdoms : embedded.kingdoms;
+    kingdoms = source.map(normaliseKingdom).filter(k => k.points.length >= 3);
+  }
+
+  let saveTimer = null;
+  function persist(immediate) {
+    clearTimeout(saveTimer);
+    const write = () => {
+      try {
+        localStorage.setItem(KINGDOM_STORAGE_KEY, JSON.stringify({ savedAt: Date.now(), kingdoms }));
+      } catch (error) {
+        setStatus("Could not autosave to this browser");
+      }
+    };
+    if (immediate) write();
+    else saveTimer = setTimeout(write, 600);
+  }
+
+  // Snapshots carry the selection too, so undo/redo puts you back where you were.
+  const snapshot = () => ({ kingdoms: clone(kingdoms), selectedId });
+
+  function restore(state) {
+    kingdoms = state.kingdoms;
+    selectedId = kingdoms.some(k => k.id === state.selectedId) ? state.selectedId : null;
+    if (selectedId) openInspector(); else dom.inspector.classList.add("hidden");
+  }
+
+  function pushUndo() {
+    undoStack.push(snapshot());
+    if (undoStack.length > 80) undoStack.shift();
+    redoStack.length = 0;
+    updateButtons();
+  }
+
+  function undo() {
+    if (!undoStack.length) return;
+    redoStack.push(snapshot());
+    restore(undoStack.pop());
+    afterChange("Undo");
+  }
+
+  function redo() {
+    if (!redoStack.length) return;
+    undoStack.push(snapshot());
+    restore(redoStack.pop());
+    afterChange("Redo");
+  }
+
+  function afterChange(message) {
+    render();
+    updateKingdomManifest();
+    syncInspector();
+    updateButtons();
+    persist(false);
+    if (message) setStatus(message);
+  }
+
+  const byId = (id) => kingdoms.find(k => k.id === id) || null;
+
+  /* ============================================================= rendering */
+
+  const pathCache = new Map();
+
+  function geometryFor(kingdom) {
+    const signature = kingdom.points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(";");
+    const cached = pathCache.get(kingdom.id);
+    if (cached && cached.signature === signature) return cached;
+    const seed = hashSeed(kingdom.id);
+    // Two passes with different seeds give the doubled-back look of a pen line.
+    const inner = roughenPolygon(kingdom.points, seed, 1);
+    const outer = roughenPolygon(kingdom.points, seed + 977, 1.4);
+    const anchor = labelAnchor(kingdom.points);
+    const entry = {
+      signature,
+      main: smoothClosedPath(inner),
+      under: smoothClosedPath(outer),
+      label: anchor.point,
+      clearance: anchor.clearance,
+      box: boundingBox(kingdom.points),
+    };
+    pathCache.set(kingdom.id, entry);
+    return entry;
+  }
+
+  const nodes = new Map();
+
+  function ensureNodes(kingdom) {
+    let entry = nodes.get(kingdom.id);
+    if (entry) return entry;
+    const fill = svgEl("path");
+    fill.setAttribute("class", "kingdom-fill");
+    const halo = svgEl("path");
+    halo.setAttribute("class", "kingdom-line halo");
+    const under = svgEl("path");
+    under.setAttribute("class", "kingdom-line under");
+    const main = svgEl("path");
+    main.setAttribute("class", "kingdom-line main");
+    const strokeGroup = svgEl("g");
+    strokeGroup.append(halo, under, main);
+    const label = svgEl("text");
+    label.setAttribute("class", "kingdom-label");
+    entry = { fill, strokeGroup, halo, under, main, label };
+    nodes.set(kingdom.id, entry);
+
+    fill.addEventListener("pointerenter", () => setHover(kingdom.id, true));
+    fill.addEventListener("pointerleave", () => setHover(kingdom.id, false));
+    return entry;
+  }
+
+  function setHover(id, on) {
+    const entry = nodes.get(id);
+    if (!entry) return;
+    [entry.fill, entry.strokeGroup, entry.label].forEach(el => el.classList.toggle("is-hover", on));
+  }
+
+  function applyKingdomAttributes(el, kingdom, role) {
+    el.dataset.mapEntity = "kingdom";
+    el.dataset.kingdomId = kingdom.id;
+    el.dataset.kingdomName = kingdom.name;
+    el.dataset.rulingHouse = kingdom.rulingHouse;
+    el.dataset.capitalId = kingdom.capitalId;
+    el.dataset.kingdomRole = role;
+    el.dataset.pointCount = String(kingdom.points.length);
+    el.dataset.borderColor = kingdom.borderColor;
+    el.dataset.fillColor = kingdom.fillColor;
+    el.dataset.fillOpacity = String(kingdom.fillOpacity);
+    el.classList.add("kingdom-group");
+    el.classList.toggle("is-selected", kingdom.id === selectedId);
+    el.classList.toggle("kingdom-hidden", kingdom.hidden);
+  }
+
+  function render() {
+    const live = new Set();
+    kingdoms.forEach(kingdom => {
+      live.add(kingdom.id);
+      const geometry = geometryFor(kingdom);
+      const entry = ensureNodes(kingdom);
+
+      entry.fill.setAttribute("d", geometry.main);
+      entry.fill.setAttribute("fill", kingdom.fillColor);
+      entry.fill.setAttribute("fill-opacity", String(kingdom.fillOpacity));
+      applyKingdomAttributes(entry.fill, kingdom, "fill");
+
+      entry.halo.setAttribute("d", geometry.main);
+      entry.under.setAttribute("d", geometry.under);
+      entry.main.setAttribute("d", geometry.main);
+      [entry.halo, entry.under, entry.main].forEach(line => line.setAttribute("stroke", kingdom.borderColor));
+      applyKingdomAttributes(entry.strokeGroup, kingdom, "border");
+
+      entry.label.textContent = kingdom.name;
+      entry.label.setAttribute("x", geometry.label.x.toFixed(2));
+      entry.label.setAttribute("y", geometry.label.y.toFixed(2));
+      entry.label.setAttribute("fill", kingdom.borderColor);
+      applyKingdomAttributes(entry.label, kingdom, "label");
+
+      dom.fills.appendChild(entry.fill);
+      dom.strokes.appendChild(entry.strokeGroup);
+      dom.labels.appendChild(entry.label);
+    });
+
+    nodes.forEach((entry, id) => {
+      if (live.has(id)) return;
+      entry.fill.remove(); entry.strokeGroup.remove(); entry.label.remove();
+      nodes.delete(id);
+      pathCache.delete(id);
+    });
+
+    renderHandles();
+    updateLabelFit();
+    dom.countLabel.textContent =
+      `${kingdoms.length} kingdom${kingdoms.length === 1 ? "" : "s"} · ${settlements.length} settlements`;
+  }
+
+  // Handle radii are written as numbers, not calc(var(...)): CSS variables are
+  // not substituted inside SVG presentation attributes, and the `r` CSS property
+  // is not reliable across browsers.
+  const handleRadius = () => HANDLE_SCREEN_PX / scale;
+
+  function renderHandles() {
+    dom.handleGroup.textContent = "";
+    if (mode === "move" || !selectedId) return;
+    const kingdom = byId(selectedId);
+    if (!kingdom || kingdom.hidden) return;
+    const radius = handleRadius();
+
+    if (mode === "edit" || mode === "addpoint") {
+      kingdom.points.forEach((point, index) => {
+        const next = kingdom.points[(index + 1) % kingdom.points.length];
+        const mid = svgEl("circle");
+        mid.setAttribute("class", "midpoint");
+        mid.setAttribute("cx", ((point.x + next.x) / 2).toFixed(2));
+        mid.setAttribute("cy", ((point.y + next.y) / 2).toFixed(2));
+        mid.setAttribute("r", (radius * 0.62).toFixed(2));
+        mid.dataset.insertAfter = String(index);
+        dom.handleGroup.appendChild(mid);
+      });
+    }
+
+    kingdom.points.forEach((point, index) => {
+      const handle = svgEl("circle");
+      handle.setAttribute("class", "vertex");
+      handle.setAttribute("cx", point.x.toFixed(2));
+      handle.setAttribute("cy", point.y.toFixed(2));
+      handle.setAttribute("r", radius.toFixed(2));
+      handle.dataset.vertexIndex = String(index);
+      dom.handleGroup.appendChild(handle);
+      // Handles are rebuilt every frame of a drag; keep the grabbed one lit.
+      if (drag && drag.kind === "vertex" && drag.index === index) {
+        handle.classList.add("dragging");
+        drag.el = handle;
+      }
+    });
+  }
+
+  function renderDraft(cursor) {
+    dom.draftGroup.textContent = "";
+    if (!draftPoints || !draftPoints.length) return;
+    const points = cursor ? [...draftPoints, cursor] : draftPoints;
+    const path = svgEl("path");
+    path.setAttribute("class", "draft-line");
+    const d = points.map((p, i) => `${i ? "L" : "M"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+    path.setAttribute("d", points.length > 2 ? `${d} Z` : d);
+    dom.draftGroup.appendChild(path);
+    const radius = handleRadius();
+    draftPoints.forEach(point => {
+      const handle = svgEl("circle");
+      handle.setAttribute("class", "vertex");
+      handle.setAttribute("cx", point.x.toFixed(2));
+      handle.setAttribute("cy", point.y.toFixed(2));
+      handle.setAttribute("r", radius.toFixed(2));
+      dom.draftGroup.appendChild(handle);
+    });
+  }
+
+  // Shrink or hide names that no longer fit their territory on screen.
+  let labelFitQueued = false;
+  function updateLabelFit() {
+    if (labelFitQueued) return;
+    labelFitQueued = true;
+    requestAnimationFrame(() => {
+      labelFitQueued = false;
+      kingdoms.forEach(kingdom => {
+        const entry = nodes.get(kingdom.id);
+        if (!entry || kingdom.hidden) return;
+        const geometry = pathCache.get(kingdom.id);
+        if (!geometry) return;
+        entry.label.style.fontSize = "";
+        const screenWidth = geometry.box.width * scale;
+        if (screenWidth < 46 || !kingdom.name) {
+          entry.label.style.display = "none";
+          return;
+        }
+        entry.label.style.display = "";
+        const available = Math.max(geometry.clearance * 1.85, geometry.box.width * 0.35);
+        let length = 0;
+        try { length = entry.label.getComputedTextLength(); } catch (error) { length = 0; }
+        if (length > available && length > 0) {
+          const base = LABEL_SCREEN_PX / scale;
+          entry.label.style.fontSize = `${Math.max(base * 0.55, base * (available / length))}px`;
+        }
+      });
+    });
+  }
+
+  /* ========================================================== settlements */
+
+  function getIcon(type, design) {
+    const set = iconLibrary[type] || iconLibrary.town;
+    return set.find(entry => Number(entry.id) === Number(design)) || set[0];
+  }
+
+  function renderSettlements() {
+    const fragment = document.createDocumentFragment();
+    settlements.forEach(item => {
+      const type = iconLibrary[item.type] ? item.type : "town";
+      const design = [1, 2, 3].includes(Number(item.design)) ? Number(item.design) : 1;
+      const el = document.createElement("div");
+      el.className = "settlement";
+      el.dataset.mapEntity = "settlement";
+      el.dataset.settlementId = item.id;
+      el.dataset.settlementType = type;
+      el.dataset.settlementDesign = String(design);
+      el.dataset.mapX = String(item.x);
+      el.dataset.mapY = String(item.y);
+      el.dataset.mapAnchor = "bottom-center";
+      el.dataset.settlementWidth = String(item.width);
+      el.dataset.rotation = String(item.rotation || 0);
+      el.dataset.settlementName = item.name || "";
+      el.dataset.settlementNotes = item.notes || "";
+      el.dataset.interaction = "open-settlement-detail";
+      el.dataset.clickEvent = "merovar:settlement-click";
+      el.setAttribute("role", "button");
+      el.setAttribute("tabindex", "0");
+      el.setAttribute("aria-label", `${item.name || capitalize(type)} — ${type}`);
+      el.style.left = `${item.x}px`;
+      el.style.top = `${item.y}px`;
+      el.style.width = `${item.width}px`;
+      el.style.opacity = item.opacity ?? 1;
+      el.style.transform = `translate(-50%,-100%) rotate(${item.rotation || 0}deg)`;
+      const img = document.createElement("img");
+      img.src = getIcon(type, design).src;
+      img.alt = item.name || capitalize(type);
+      el.appendChild(img);
+      el.addEventListener("keydown", event => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        activateSettlement(item.id, "keyboard");
+      });
+      fragment.appendChild(el);
+    });
+    dom.settlementLayer.appendChild(fragment);
+  }
+
+  function settlementRecord(item, index) {
+    const type = iconLibrary[item.type] ? item.type : "town";
+    return {
+      id: item.id,
+      entity: "settlement",
+      type,
+      design: Number(item.design) || 1,
+      displayName: item.name || `${capitalize(type)} ${index + 1}`,
+      name: item.name || "",
+      notes: item.notes || "",
+      coordinates: {
+        x: Number(item.x), y: Number(item.y),
+        anchor: "bottom-center", mapWidth: MAP_WIDTH, mapHeight: MAP_HEIGHT,
+      },
+      appearance: {
+        width: Number(item.width), rotation: Number(item.rotation) || 0,
+        opacity: Number(item.opacity ?? 1), colorGrade: "merovar-parchment-soft-v2",
+      },
+      interaction: {
+        clickable: true, action: "open-settlement-detail",
+        event: "merovar:settlement-click", selector: `[data-settlement-id="${item.id}"]`,
+      },
+    };
+  }
+
+  function buildSettlementManifest() {
+    const counts = {};
+    const list = settlements.map((item, index) => {
+      const record = settlementRecord(item, index);
+      counts[record.type] = (counts[record.type] || 0) + 1;
+      return record;
+    });
+    return {
+      schema: "merovar.interactive-map.v2",
+      map: { id: "merovar-world-map", width: MAP_WIDTH, height: MAP_HEIGHT, coordinateOrigin: "top-left" },
+      counts,
+      editable: false,
+      visualGuarantee: "Settlement positions, sizes, rotations, map image, geography, coastlines, islands and borders are unchanged.",
+      integration: {
+        selector: '.settlement[data-map-entity="settlement"]',
+        manifestElement: "#merovarSettlementManifest",
+        api: "window.MerovarMapAPI",
+        clickEvent: "merovar:settlement-click",
+      },
+      settlements: list,
+    };
+  }
+
+  function activateSettlement(id, source = "api") {
+    const index = settlements.findIndex(item => item.id === id);
+    if (index === -1) return null;
+    const record = settlementRecord(settlements[index], index);
+    window.dispatchEvent(new CustomEvent("merovar:settlement-click", { detail: { ...clone(record), source } }));
+    return clone(record);
+  }
+
+  /* ====================================================== kingdom manifest */
+
+  function settlementsInside(kingdom) {
+    if (kingdom.points.length < 3) return [];
+    return settlements
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => pointInPolygon(Number(item.x), Number(item.y), kingdom.points))
+      .map(({ item, index }) => settlementRecord(item, index));
+  }
+
+  function kingdomRecord(kingdom) {
+    const geometry = geometryFor(kingdom);
+    const inside = settlementsInside(kingdom);
+    return {
+      id: kingdom.id,
+      entity: "kingdom",
+      name: kingdom.name,
+      rulingHouse: kingdom.rulingHouse,
+      capitalSettlementId: kingdom.capitalId,
+      notes: kingdom.notes,
+      visible: !kingdom.hidden,
+      appearance: {
+        borderColor: kingdom.borderColor,
+        fillColor: kingdom.fillColor,
+        fillOpacity: kingdom.fillOpacity,
+        style: "hand-inked-parchment",
+      },
+      geometry: {
+        pointCount: kingdom.points.length,
+        points: kingdom.points.map(p => ({ x: Number(p.x.toFixed(2)), y: Number(p.y.toFixed(2)) })),
+        centroid: centroid(kingdom.points),
+        labelAnchor: geometry.label,
+        boundingBox: geometry.box,
+        areaSquareUnits: Math.round(polygonArea(kingdom.points)),
+        coordinateSystem: { width: MAP_WIDTH, height: MAP_HEIGHT, origin: "top-left" },
+      },
+      settlementsInside: { count: inside.length, ids: inside.map(s => s.id) },
+      interaction: {
+        clickable: true, action: "open-kingdom-detail",
+        event: "merovar:kingdom-click", selector: `[data-kingdom-id="${kingdom.id}"]`,
+      },
+    };
+  }
+
+  function buildKingdomManifest() {
+    return {
+      schema: "merovar.kingdom-borders.v1",
+      map: { id: "merovar-world-map", width: MAP_WIDTH, height: MAP_HEIGHT, coordinateOrigin: "top-left" },
+      counts: { kingdoms: kingdoms.length },
+      visualGuarantee: "Kingdom borders are an overlay only. The map image and all 94 settlements are unchanged.",
+      layerOrder: ["base-map", "kingdom-fills", "kingdom-borders-and-names", "settlements", "editor-interface"],
+      integration: {
+        selector: '[data-map-entity="kingdom"]',
+        manifestElement: "#merovarKingdomManifest",
+        api: "window.MerovarKingdomAPI",
+        clickEvent: "merovar:kingdom-click",
+      },
+      kingdoms: kingdoms.map(kingdomRecord),
+    };
+  }
+
+  function updateKingdomManifest() {
+    const manifest = buildKingdomManifest();
+    dom.kingdomManifest.textContent = JSON.stringify(manifest).replace(/</g, "\\u003c");
+    window.MEROVAR_KINGDOM_MANIFEST = clone(manifest);
+    window.MEROVAR_KINGDOMS = clone(manifest.kingdoms);
+    return manifest;
+  }
+
+  function updateSettlementManifest() {
+    const manifest = buildSettlementManifest();
+    dom.settlementManifest.textContent = JSON.stringify(manifest).replace(/</g, "\\u003c");
+    window.MEROVAR_MAP_MANIFEST = clone(manifest);
+    window.MEROVAR_SETTLEMENTS = clone(manifest.settlements);
+    return manifest;
+  }
+
+  /* ============================================================= transform */
+
+  function viewSize() {
+    const vv = window.visualViewport;
+    return { w: vv ? vv.width : window.innerWidth, h: vv ? vv.height : window.innerHeight };
+  }
+
+  function clampOffsets() {
+    const { w, h } = viewSize();
+    const sw = MAP_WIDTH * scale;
+    const sh = MAP_HEIGHT * scale;
+    offsetX = sw <= w ? (w - sw) / 2 : clamp(offsetX, w - sw, 0);
+    offsetY = sh <= h ? (h - sh) / 2 : clamp(offsetY, h - sh, 0);
+  }
+
+  function applyTransform() {
+    clampOffsets();
+    dom.world.style.transform = `translate(${offsetX}px,${offsetY}px) scale(${scale})`;
+    // Ink, labels and handles are sized in map units so they stay constant on screen.
+    const root = dom.world.style;
+    root.setProperty("--k-ink", (INK_SCREEN_PX / scale).toFixed(3));
+    root.setProperty("--k-label", (LABEL_SCREEN_PX / scale).toFixed(3));
+    root.setProperty("--k-handle", (HANDLE_SCREEN_PX / scale).toFixed(3));
+    // Handle radii are numeric, so they have to be redrawn when the zoom changes.
+    if (selectedId && mode !== "move") renderHandles();
+    if (draftPoints && draftPoints.length) renderDraft(null);
+    updateLabelFit();
+  }
+
+  function fitMap() {
+    const { w, h } = viewSize();
+    const reserve = w <= 1100 ? 64 : 0;
+    const pad = w <= 700 ? 4 : 16;
+    scale = Math.min((w - pad * 2) / MAP_WIDTH, (h - reserve - pad * 2) / MAP_HEIGHT);
+    applyTransform();
+  }
+
+  function zoomAt(nextScale, cx, cy) {
+    const clamped = clamp(nextScale, MIN_SCALE, MAX_SCALE);
+    if (clamped === scale) return;
+    const mapX = (cx - offsetX) / scale;
+    const mapY = (cy - offsetY) / scale;
+    scale = clamped;
+    offsetX = cx - mapX * scale;
+    offsetY = cy - mapY * scale;
+    userAdjustedView = true;
+    applyTransform();
+  }
+
+  function zoomCentre(factor) {
+    const { w, h } = viewSize();
+    zoomAt(scale * factor, w / 2, h / 2);
+  }
+
+  const toMap = (clientX, clientY) => ({
+    x: clamp((clientX - offsetX) / scale, 0, MAP_WIDTH),
+    y: clamp((clientY - offsetY) / scale, 0, MAP_HEIGHT),
+  });
+
+  const hitTest = (clientX, clientY) => document.elementFromPoint(clientX, clientY);
+
+  /* ================================================================= modes */
+
+  const MODE_LABELS = {
+    move: "Move Map",
+    draw: "Draw Kingdom",
+    edit: "Select / Edit Border",
+    addpoint: "Add Point",
+    delpoint: "Delete Point",
+  };
+
+  const MODE_HINTS = {
+    move: "Drag to pan · scroll to zoom · click a settlement or kingdom for details",
+    draw: "Click to place border points · double-click, Enter or Finish to close · Esc cancels",
+    edit: "Click a kingdom to select · drag points to reshape · drag inside to move the whole border",
+    addpoint: "Click a hollow midpoint handle, or anywhere on the outline, to insert a point",
+    delpoint: "Click a border point to remove it (minimum three)",
+  };
+
+  function setMode(next) {
+    if (next !== "draw" && draftPoints) cancelDraft(false);
+    mode = next;
+    document.querySelectorAll("#toolbar .tool[data-mode]").forEach(button => {
+      button.classList.toggle("active", button.dataset.mode === next);
+    });
+    document.body.classList.remove("mode-move", "mode-draw", "mode-edit", "mode-addpoint", "mode-delpoint");
+    document.body.classList.add(`mode-${next}`);
+    // Settlements should not swallow clicks that are meant for the border tools.
+    document.body.classList.toggle("locked-settlements", next !== "move");
+    dom.viewport.classList.toggle("drawing", next === "draw");
+    dom.viewport.classList.toggle("picking", next === "addpoint" || next === "delpoint");
+    if (next === "draw") { draftPoints = []; renderDraft(null); }
+    dom.modeLabel.textContent = MODE_LABELS[next];
+    setStatus(MODE_HINTS[next]);
+    updateButtons();
+    renderHandles();
+  }
+
+  function updateButtons() {
+    dom.undoButton.disabled = undoStack.length === 0;
+    dom.redoButton.disabled = redoStack.length === 0;
+    dom.finishButton.disabled = !(draftPoints && draftPoints.length >= 3);
+    dom.cancelButton.disabled = !(draftPoints && draftPoints.length > 0);
+    dom.deleteKingdomButton.disabled = !selectedId;
+  }
+
+  let statusTimer = null;
+  function setStatus(message) {
+    dom.saveState.textContent = message;
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => { dom.saveState.textContent = MODE_HINTS[mode]; }, 4200);
+  }
+
+  /* ============================================================== drawing */
+
+  function finishDraft() {
+    if (!draftPoints || draftPoints.length < 3) {
+      setStatus("A kingdom needs at least three points");
+      return;
+    }
+    pushUndo();
+    const kingdom = normaliseKingdom({
+      name: `Kingdom ${kingdoms.length + 1}`,
+      points: draftPoints.map(p => ({ x: p.x, y: p.y })),
+    }, kingdoms.length);
+    kingdoms.push(kingdom);
+    draftPoints = null;
+    renderDraft(null);
+    selectedId = kingdom.id;
+    setMode("edit");
+    afterChange(`Created ${kingdom.name}`);
+    openInspector();
+  }
+
+  function cancelDraft(announce = true) {
+    draftPoints = null;
+    renderDraft(null);
+    updateButtons();
+    if (announce) setStatus("Drawing cancelled");
+  }
+
+  /* ============================================ pointer: pan, draw, reshape */
+
+  const pointers = new Map();
+  let drag = null;
+  let pointerMoved = false;
+  let pinch = null;
+
+  function pinchState() {
+    const [a, b] = [...pointers.values()];
+    return { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, dist: Math.hypot(a.x - b.x, a.y - b.y) };
+  }
+
+  dom.viewport.addEventListener("pointerdown", event => {
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+    try { dom.viewport.setPointerCapture(event.pointerId); } catch (error) { /* synthetic pointer */ }
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pointerMoved = false;
+
+    if (pointers.size === 2) {
+      const { cx, cy, dist } = pinchState();
+      pinch = { dist: dist || 1, scale, mapX: (cx - offsetX) / scale, mapY: (cy - offsetY) / scale };
+      drag = null;
+      return;
+    }
+
+    const base = { clientStartX: event.clientX, clientStartY: event.clientY };
+    const target = hitTest(event.clientX, event.clientY);
+    const vertex = target?.closest(".vertex[data-vertex-index]");
+    if (vertex && mode === "edit") {
+      drag = { ...base, kind: "vertex", index: Number(vertex.dataset.vertexIndex), snapshotTaken: false, el: vertex };
+      vertex.classList.add("dragging");
+      return;
+    }
+
+    if (mode === "edit" && selectedId) {
+      const fill = target?.closest('.kingdom-fill[data-kingdom-id]');
+      if (fill && fill.dataset.kingdomId === selectedId) {
+        const start = toMap(event.clientX, event.clientY);
+        drag = {
+          ...base,
+          kind: "kingdom",
+          startX: start.x, startY: start.y,
+          origin: byId(selectedId).points.map(p => ({ ...p })),
+          snapshotTaken: false,
+        };
+        return;
+      }
+    }
+
+    drag = { ...base, kind: "pan", startX: event.clientX, startY: event.clientY, offsetX, offsetY };
+    dom.viewport.classList.add("dragging");
+  });
+
+  dom.viewport.addEventListener("pointermove", event => {
+    if (pointers.has(event.pointerId)) pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (pointers.size === 2 && pinch) {
+      const { cx, cy, dist } = pinchState();
+      scale = clamp(pinch.scale * (dist / pinch.dist), MIN_SCALE, MAX_SCALE);
+      offsetX = cx - pinch.mapX * scale;
+      offsetY = cy - pinch.mapY * scale;
+      userAdjustedView = true;
+      pointerMoved = true;
+      applyTransform();
+      return;
+    }
+
+    if (mode === "draw" && draftPoints?.length && (!drag || drag.kind !== "pan")) {
+      // Rubber-band the pending edge to the cursor.
+      renderDraft(toMap(event.clientX, event.clientY));
+    }
+
+    if (!drag) return;
+    if (Math.abs(event.clientX - drag.clientStartX) > 3 ||
+        Math.abs(event.clientY - drag.clientStartY) > 3) pointerMoved = true;
+
+    if (drag.kind === "pan") {
+      offsetX = drag.offsetX + (event.clientX - drag.startX);
+      offsetY = drag.offsetY + (event.clientY - drag.startY);
+      userAdjustedView = true;
+      applyTransform();
+      return;
+    }
+
+    const kingdom = byId(selectedId);
+    if (!kingdom) return;
+
+    if (drag.kind === "vertex") {
+      if (!drag.snapshotTaken) { pushUndo(); drag.snapshotTaken = true; }
+      const point = toMap(event.clientX, event.clientY);
+      kingdom.points[drag.index] = point;
+      render();
+      return;
+    }
+
+    if (drag.kind === "kingdom") {
+      if (!drag.snapshotTaken) { pushUndo(); drag.snapshotTaken = true; }
+      const current = toMap(event.clientX, event.clientY);
+      const dx = current.x - drag.startX;
+      const dy = current.y - drag.startY;
+      kingdom.points = drag.origin.map(p => ({
+        x: clamp(p.x + dx, 0, MAP_WIDTH),
+        y: clamp(p.y + dy, 0, MAP_HEIGHT),
+      }));
+      render();
+    }
+  });
+
+  function endPointer(event) {
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (drag?.el) drag.el.classList.remove("dragging");
+    if (drag && (drag.kind === "vertex" || drag.kind === "kingdom") && drag.snapshotTaken) {
+      afterChange(drag.kind === "vertex" ? "Point moved" : "Border moved");
+    }
+    if (pointers.size === 0) {
+      drag = null;
+      dom.viewport.classList.remove("dragging");
+    }
+  }
+  dom.viewport.addEventListener("pointerup", endPointer);
+  dom.viewport.addEventListener("pointercancel", endPointer);
+
+  dom.viewport.addEventListener("click", event => {
+    if (pointerMoved) return;
+    // Pointer capture can retarget the click at the viewport, so hit-test by
+    // coordinate rather than trusting event.target.
+    const target = hitTest(event.clientX, event.clientY);
+    const point = toMap(event.clientX, event.clientY);
+
+    if (mode === "edit" && target?.closest(".vertex[data-vertex-index]")) return;
+
+    if (mode === "draw") {
+      draftPoints = draftPoints || [];
+      draftPoints.push(point);
+      lastDraftClickAt = performance.now();
+      renderDraft(null);
+      updateButtons();
+      return;
+    }
+
+    if (mode === "delpoint" && selectedId) {
+      const vertex = target?.closest(".vertex[data-vertex-index]");
+      if (vertex) { deletePoint(Number(vertex.dataset.vertexIndex)); return; }
+    }
+
+    if ((mode === "addpoint" || mode === "edit") && selectedId) {
+      const mid = target?.closest(".midpoint[data-insert-after]");
+      if (mid) { insertPoint(Number(mid.dataset.insertAfter), point); return; }
+      if (mode === "addpoint") { insertPointNearest(point); return; }
+    }
+
+    const kingdomEl = target?.closest('[data-map-entity="kingdom"]');
+    if (kingdomEl) {
+      selectKingdom(kingdomEl.dataset.kingdomId, "click");
+      return;
+    }
+
+    const settlementEl = target?.closest('[data-map-entity="settlement"]');
+    if (settlementEl) {
+      activateSettlement(settlementEl.dataset.settlementId, "click");
+      const record = settlements.find(item => item.id === settlementEl.dataset.settlementId);
+      if (record) setStatus(`${capitalize(record.type)} at ${Math.round(record.x)}, ${Math.round(record.y)}`);
+      return;
+    }
+
+    if (mode === "edit" || mode === "move") deselect();
+  });
+
+  dom.viewport.addEventListener("dblclick", event => {
+    if (mode === "draw") {
+      // The second click of the double-click already added a point; drop it.
+      if (draftPoints && draftPoints.length > 3 && performance.now() - lastDraftClickAt < 400) draftPoints.pop();
+      finishDraft();
+      return;
+    }
+    if (!hitTest(event.clientX, event.clientY)?.closest('[data-map-entity="kingdom"]')) {
+      zoomAt(scale * 1.6, event.clientX, event.clientY);
+    }
+  });
+
+  dom.viewport.addEventListener("wheel", event => {
+    event.preventDefault();
+    zoomAt(scale * Math.exp(-event.deltaY * 0.00115), event.clientX, event.clientY);
+  }, { passive: false });
+
+  /* ======================================================== point editing */
+
+  function insertPoint(afterIndex, point) {
+    const kingdom = byId(selectedId);
+    if (!kingdom) return;
+    pushUndo();
+    kingdom.points.splice(afterIndex + 1, 0, point);
+    afterChange("Point added");
+  }
+
+  function insertPointNearest(point) {
+    const kingdom = byId(selectedId);
+    if (!kingdom) return;
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    kingdom.points.forEach((p, index) => {
+      const d = distanceToSegment(point.x, point.y, p, kingdom.points[(index + 1) % kingdom.points.length]);
+      if (d < bestDistance) { bestDistance = d; bestIndex = index; }
+    });
+    // Far-away clicks would drag a spike out of the outline.
+    if (bestDistance > 34 / scale) { setStatus("Click closer to the outline to insert a point"); return; }
+    insertPoint(bestIndex, point);
+  }
+
+  function deletePoint(index) {
+    const kingdom = byId(selectedId);
+    if (!kingdom) return;
+    if (kingdom.points.length <= 3) { setStatus("A kingdom needs at least three points"); return; }
+    pushUndo();
+    kingdom.points.splice(index, 1);
+    afterChange("Point removed");
+  }
+
+  /* ============================================================= selection */
+
+  function selectKingdom(id, source = "api") {
+    const kingdom = byId(id);
+    if (!kingdom) return null;
+    selectedId = id;
+    render();
+    openInspector();
+    updateButtons();
+    const record = kingdomRecord(kingdom);
+    window.dispatchEvent(new CustomEvent("merovar:kingdom-click", { detail: { ...clone(record), source } }));
+    setStatus(`${kingdom.name} — ${record.settlementsInside.count} settlements inside`);
+    return clone(record);
+  }
+
+  function deselect() {
+    selectedId = null;
+    dom.inspector.classList.add("hidden");
+    render();
+    updateButtons();
+  }
+
+  function openInspector() {
+    const kingdom = byId(selectedId);
+    if (!kingdom) { dom.inspector.classList.add("hidden"); return; }
+    dom.inspector.classList.remove("hidden");
+    syncInspector();
+  }
+
+  function syncInspector() {
+    const kingdom = byId(selectedId);
+    if (!kingdom) { dom.inspector.classList.add("hidden"); return; }
+    const record = kingdomRecord(kingdom);
+    dom.inspectorTitle.textContent = kingdom.name || "Kingdom";
+    dom.inspectorMeta.textContent =
+      `${kingdom.points.length} points · ${record.settlementsInside.count} settlements inside · ` +
+      `${(record.geometry.areaSquareUnits / 1000).toFixed(0)}k sq units`;
+    if (document.activeElement !== dom.editName) dom.editName.value = kingdom.name;
+    if (document.activeElement !== dom.editHouse) dom.editHouse.value = kingdom.rulingHouse;
+    if (document.activeElement !== dom.editNotes) dom.editNotes.value = kingdom.notes;
+    dom.editCapital.value = kingdom.capitalId;
+    dom.editBorderColor.value = kingdom.borderColor;
+    dom.editFillColor.value = kingdom.fillColor;
+    dom.editFillOpacity.value = String(kingdom.fillOpacity);
+    dom.fillOpacityValue.textContent = `${Math.round(kingdom.fillOpacity * 100)}%`;
+  }
+
+  function buildCapitalOptions() {
+    const counters = {};
+    settlements.forEach(item => {
+      const type = iconLibrary[item.type] ? item.type : "town";
+      counters[type] = (counters[type] || 0) + 1;
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = `${capitalize(type)} ${counters[type]} · ${Math.round(item.x)}, ${Math.round(item.y)}`;
+      dom.editCapital.appendChild(option);
+    });
+  }
+
+  function editField(input, apply, snapshot = true) {
+    let pending = false;
+    input.addEventListener("input", () => {
+      const kingdom = byId(selectedId);
+      if (!kingdom) return;
+      if (snapshot && !pending) { pushUndo(); pending = true; }
+      apply(kingdom, input.value);
+      render();
+      updateKingdomManifest();
+      syncInspector();
+      persist(false);
+    });
+    input.addEventListener("change", () => { pending = false; });
+    input.addEventListener("blur", () => { pending = false; });
+  }
+
+  editField(dom.editName, (k, v) => { k.name = v; });
+  editField(dom.editHouse, (k, v) => { k.rulingHouse = v; });
+  editField(dom.editNotes, (k, v) => { k.notes = v; });
+  editField(dom.editBorderColor, (k, v) => { k.borderColor = v; });
+  editField(dom.editFillColor, (k, v) => { k.fillColor = v; });
+  editField(dom.editFillOpacity, (k, v) => { k.fillOpacity = clamp(Number(v) || 0, 0, 0.45); });
+  dom.editCapital.addEventListener("change", () => {
+    const kingdom = byId(selectedId);
+    if (!kingdom) return;
+    pushUndo();
+    kingdom.capitalId = dom.editCapital.value;
+    afterChange("Capital set");
+  });
+
+  function duplicateKingdom() {
+    const kingdom = byId(selectedId);
+    if (!kingdom) return;
+    pushUndo();
+    const copy = clone(kingdom);
+    copy.id = uid("kingdom");
+    copy.name = `${kingdom.name} (copy)`;
+    copy.points = kingdom.points.map(p => ({
+      x: clamp(p.x + 70, 0, MAP_WIDTH),
+      y: clamp(p.y + 70, 0, MAP_HEIGHT),
+    }));
+    kingdoms.push(copy);
+    selectedId = copy.id;
+    afterChange(`Duplicated as ${copy.name}`);
+    openInspector();
+  }
+
+  function deleteKingdom() {
+    const kingdom = byId(selectedId);
+    if (!kingdom) return;
+    if (!window.confirm(`Delete ${kingdom.name}? This cannot be undone except with Undo.`)) return;
+    pushUndo();
+    kingdoms = kingdoms.filter(k => k.id !== selectedId);
+    selectedId = null;
+    dom.inspector.classList.add("hidden");
+    afterChange("Kingdom deleted");
+  }
+
+  /* ================================================== save / export / import */
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportKingdomJson() {
+    const payload = {
+      schema: "merovar.kingdom-borders.v1",
+      exportedAt: new Date().toISOString(),
+      map: { id: "merovar-world-map", width: MAP_WIDTH, height: MAP_HEIGHT, coordinateOrigin: "top-left" },
+      kingdoms,
+      manifest: buildKingdomManifest(),
+    };
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), "merovar-kingdoms.json");
+    setStatus("Kingdom JSON exported");
+  }
+
+  function importKingdomJson(text) {
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (error) { setStatus("That file is not valid JSON"); return; }
+    const incoming = Array.isArray(parsed) ? parsed : parsed.kingdoms;
+    if (!Array.isArray(incoming)) { setStatus("No kingdoms found in that file"); return; }
+    const valid = incoming
+      .map((raw, index) => normaliseKingdom(raw, index))
+      .filter(k => k.points.length >= 3);
+    if (!valid.length) { setStatus("No kingdoms with three or more points"); return; }
+    if (kingdoms.length && !window.confirm(`Replace ${kingdoms.length} existing kingdom(s) with ${valid.length} imported?`)) return;
+    pushUndo();
+    kingdoms = valid;
+    selectedId = null;
+    pathCache.clear();
+    dom.inspector.classList.add("hidden");
+    afterChange(`Imported ${valid.length} kingdom${valid.length === 1 ? "" : "s"}`);
+  }
+
+  function saveEditedHtml() {
+    persist(true);
+    const cloneDoc = document.documentElement.cloneNode(true);
+    cloneDoc.querySelector("#embeddedKingdomData").textContent =
+      JSON.stringify({ version: 1, savedAt: Date.now(), kingdoms }).replace(/</g, "\\u003c");
+    cloneDoc.querySelector("#merovarKingdomManifest").textContent =
+      JSON.stringify(buildKingdomManifest()).replace(/</g, "\\u003c");
+    cloneDoc.querySelector("#merovarSettlementManifest").textContent =
+      JSON.stringify(buildSettlementManifest()).replace(/</g, "\\u003c");
+    // Strip runtime state so the saved file opens exactly like a fresh build.
+    cloneDoc.querySelector("#world").removeAttribute("style");
+    cloneDoc.querySelector("#settlementLayer").innerHTML = "";
+    ["#kingdomFills", "#kingdomStrokes", "#kingdomLabels", "#draftGroup", "#handleGroup"]
+      .forEach(selector => { cloneDoc.querySelector(selector).innerHTML = ""; });
+    cloneDoc.querySelector("#inspector").classList.add("hidden");
+    // The dev server injects a live-reload script; it must not travel with the file.
+    cloneDoc.querySelectorAll("script").forEach(node => {
+      if (node.textContent.includes("__dev/reload")) node.remove();
+    });
+    const finalHtml = `<!doctype html>\n${cloneDoc.outerHTML}`;
+    downloadBlob(new Blob([finalHtml], { type: "text/html;charset=utf-8" }), "merovar-map-with-kingdoms.html");
+    setStatus("Standalone HTML downloaded");
+  }
+
+  /* ================================================================ wiring */
+
+  document.querySelectorAll("#toolbar .tool[data-mode]").forEach(button => {
+    button.addEventListener("click", () => setMode(button.dataset.mode));
+  });
+  dom.finishButton.addEventListener("click", finishDraft);
+  dom.cancelButton.addEventListener("click", () => cancelDraft(true));
+  dom.undoButton.addEventListener("click", undo);
+  dom.redoButton.addEventListener("click", redo);
+  dom.deleteKingdomButton.addEventListener("click", deleteKingdom);
+  document.getElementById("duplicateButton").addEventListener("click", duplicateKingdom);
+  document.getElementById("deleteButton").addEventListener("click", deleteKingdom);
+  document.getElementById("closeInspectorButton").addEventListener("click", deselect);
+  dom.showBorders.addEventListener("change", () => {
+    document.body.classList.toggle("hide-borders", !dom.showBorders.checked);
+  });
+  dom.showNames.addEventListener("change", () => {
+    document.body.classList.toggle("hide-names", !dom.showNames.checked);
+  });
+  document.getElementById("saveButton").addEventListener("click", () => {
+    persist(true);
+    setStatus(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+  });
+  document.getElementById("saveHtmlButton").addEventListener("click", saveEditedHtml);
+  document.getElementById("exportJsonButton").addEventListener("click", exportKingdomJson);
+  const importInput = document.getElementById("importJsonInput");
+  document.getElementById("importJsonButton").addEventListener("click", () => importInput.click());
+  importInput.addEventListener("change", async () => {
+    const file = importInput.files?.[0];
+    if (!file) return;
+    importKingdomJson(await file.text());
+    importInput.value = "";
+  });
+
+  const fit = () => { userAdjustedView = false; fitMap(); };
+  document.getElementById("fitButton").addEventListener("click", fit);
+  document.getElementById("navFit").addEventListener("click", fit);
+  document.getElementById("zoomIn").addEventListener("click", () => zoomCentre(1.3));
+  document.getElementById("zoomOut").addEventListener("click", () => zoomCentre(1 / 1.3));
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen?.();
+  };
+  document.getElementById("fullscreenButton").addEventListener("click", toggleFullscreen);
+  document.getElementById("navFull").addEventListener("click", toggleFullscreen);
+
+  window.addEventListener("keydown", event => {
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redo(); else undo();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && key === "y") { event.preventDefault(); redo(); return; }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    if (event.key === "Escape") {
+      if (draftPoints && draftPoints.length) cancelDraft(true);
+      else if (selectedId) deselect();
+      else setMode("move");
+      return;
+    }
+    if (event.key === "Enter" && mode === "draw") { finishDraft(); return; }
+    if (event.key === "Backspace" && mode === "draw" && draftPoints?.length) {
+      draftPoints.pop(); renderDraft(null); updateButtons(); return;
+    }
+    if (event.key === "Delete" && selectedId) { deleteKingdom(); return; }
+
+    const step = event.shiftKey ? 240 : 80;
+    switch (event.key) {
+      case "ArrowLeft": offsetX += step; break;
+      case "ArrowRight": offsetX -= step; break;
+      case "ArrowUp": offsetY += step; break;
+      case "ArrowDown": offsetY -= step; break;
+      case "+": case "=": zoomCentre(1.3); return;
+      case "-": case "_": zoomCentre(1 / 1.3); return;
+      case "0": fit(); return;
+      case "f": toggleFullscreen(); return;
+      case "d": setMode("draw"); return;
+      case "s": setMode("edit"); return;
+      case "m": setMode("move"); return;
+      default: return;
+    }
+    event.preventDefault();
+    userAdjustedView = true;
+    applyTransform();
+  });
+
+  const onResize = () => { if (userAdjustedView) applyTransform(); else fitMap(); };
+  window.addEventListener("resize", onResize);
+  window.visualViewport?.addEventListener("resize", onResize);
+
+  /* ================================================================== APIs */
+
+  window.MerovarMapAPI = Object.freeze({
+    getManifest: () => clone(buildSettlementManifest()),
+    getSettlements: () => clone(buildSettlementManifest().settlements),
+    getSettlement: id => clone(buildSettlementManifest().settlements.find(item => item.id === id) || null),
+    getByType: type => clone(buildSettlementManifest().settlements.filter(item => item.type === type)),
+    getElement: id => document.querySelector(`[data-settlement-id="${CSS.escape(id)}"]`),
+    activate: (id, source = "api") => activateSettlement(id, source),
+    editable: false,
+    eventName: "merovar:settlement-click",
+    selector: '.settlement[data-map-entity="settlement"]',
+  });
+
+  window.MerovarKingdomAPI = Object.freeze({
+    getAllKingdoms: () => clone(buildKingdomManifest().kingdoms),
+    getKingdomById: id => {
+      const kingdom = byId(id);
+      return kingdom ? clone(kingdomRecord(kingdom)) : null;
+    },
+    selectKingdom: id => selectKingdom(id, "api"),
+    showKingdom: id => {
+      const kingdom = byId(id);
+      if (!kingdom) return false;
+      kingdom.hidden = false;
+      afterChange(null);
+      return true;
+    },
+    hideKingdom: id => {
+      const kingdom = byId(id);
+      if (!kingdom) return false;
+      kingdom.hidden = true;
+      afterChange(null);
+      return true;
+    },
+    getSettlementsInsideKingdom: id => {
+      const kingdom = byId(id);
+      return kingdom ? clone(settlementsInside(kingdom)) : [];
+    },
+    getManifest: () => clone(buildKingdomManifest()),
+    getElements: id => [...document.querySelectorAll(`[data-kingdom-id="${CSS.escape(id)}"]`)],
+    eventName: "merovar:kingdom-click",
+    selector: '[data-map-entity="kingdom"]',
+  });
+
+  /* ================================================================= start */
+
+  loadKingdoms();
+  buildCapitalOptions();
+  renderSettlements();
+  updateSettlementManifest();
+  render();
+  updateKingdomManifest();
+  setMode("move");
+  fitMap();
+})();
+</script>
+</body></html>

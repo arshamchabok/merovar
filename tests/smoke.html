@@ -1,0 +1,231 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>pending</title></head>
+<body>
+<iframe id="frame" style="width:1200px;height:800px;border:0"></iframe>
+<pre id="out">running</pre>
+<script>
+const results = [];
+const check = (name, condition, detail = "") =>
+  results.push(`${condition ? "PASS" : "FAIL"} ${name}${detail ? " :: " + detail : ""}`);
+
+const frame = document.getElementById("frame");
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Same origin as index.html, so this clears the editor's autosave before load.
+try { localStorage.clear(); } catch (e) { /* ignore */ }
+
+function clickAt(win, el, x, y) {
+  for (const type of ["pointerdown", "pointerup", "click"]) {
+    const Ctor = type === "click" ? win.MouseEvent : win.PointerEvent;
+    el.dispatchEvent(new Ctor(type, {
+      clientX: x, clientY: y, bubbles: true, cancelable: true,
+      button: 0, buttons: type === "pointerdown" ? 1 : 0,
+      pointerId: 1, pointerType: "mouse", isPrimary: true,
+    }));
+  }
+}
+
+frame.addEventListener("load", async () => {
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  const errors = [];
+  win.addEventListener("error", e => errors.push(String(e.message)));
+
+  try {
+    await sleep(400);
+
+    // --- structure -------------------------------------------------------
+    check("94 settlements rendered", doc.querySelectorAll(".settlement").length === 94,
+      String(doc.querySelectorAll(".settlement").length));
+    check("map image untouched",
+      doc.getElementById("map").getAttribute("src").startsWith("data:image/png;base64,"));
+    const world = [...doc.getElementById("world").children].map(n => n.id || n.tagName);
+    check("layer order map->kingdoms->settlements->handles",
+      JSON.stringify(world) === JSON.stringify(["map", "kingdomLayer", "settlementLayer", "kingdomEditLayer"]),
+      world.join(","));
+    check("fills painted below strokes",
+      [...doc.getElementById("kingdomLayer").children].map(n => n.id).join(",")
+        .includes("kingdomFills,kingdomStrokes,kingdomLabels"));
+
+    // --- APIs -------------------------------------------------------------
+    const api = win.MerovarKingdomAPI;
+    check("MerovarKingdomAPI exists", !!api);
+    ["getAllKingdoms", "getKingdomById", "selectKingdom", "showKingdom", "hideKingdom",
+     "getSettlementsInsideKingdom"].forEach(fn =>
+      check(`API.${fn}`, typeof api?.[fn] === "function"));
+    check("MerovarMapAPI still present", typeof win.MerovarMapAPI?.getSettlements === "function");
+    check("settlement manifest has 94",
+      win.MerovarMapAPI.getSettlements().length === 94);
+    check("starts with no kingdoms", api.getAllKingdoms().length === 0);
+
+    // --- draw a kingdom ---------------------------------------------------
+    const viewport = doc.getElementById("viewport");
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    check("draw mode active", doc.body.classList.contains("mode-draw"));
+    const pts = [[400, 250], [800, 240], [820, 560], [380, 580]];
+    pts.forEach(([x, y]) => clickAt(win, viewport, x, y));
+    check("finish button enabled after 4 points", !doc.getElementById("finishButton").disabled);
+    doc.getElementById("finishButton").click();
+    await sleep(120);
+
+    const all = api.getAllKingdoms();
+    check("one kingdom created", all.length === 1, String(all.length));
+    check("kingdom has 4 points", all[0]?.geometry.pointCount === 4, String(all[0]?.geometry.pointCount));
+    const inBounds = all[0]?.geometry.points.every(p =>
+      p.x >= 0 && p.x <= 3840 && p.y >= 0 && p.y <= 1645);
+    check("points inside 3840x1645 space", inBounds,
+      JSON.stringify(all[0]?.geometry.points));
+
+    // --- DOM + metadata ----------------------------------------------------
+    const id = all[0].id;
+    const els = doc.querySelectorAll(`[data-kingdom-id="${id}"]`);
+    check("kingdom rendered as fill+border+label", els.length === 3, String(els.length));
+    const roles = [...els].map(e => e.dataset.kingdomRole).sort().join(",");
+    check("roles present", roles === "border,fill,label", roles);
+    check("data-kingdom-name set", [...els].every(e => "kingdomName" in e.dataset));
+    check("data-ruling-house set", [...els].every(e => "rulingHouse" in e.dataset));
+    check("data-capital-id set", [...els].every(e => "capitalId" in e.dataset));
+    const fill = doc.querySelector(`.kingdom-fill[data-kingdom-id="${id}"]`);
+    check("fill opacity is subtle", Number(fill.getAttribute("fill-opacity")) <= 0.15,
+      fill.getAttribute("fill-opacity"));
+    check("border path is a curve, not a polygon",
+      doc.querySelector(".kingdom-line.main").getAttribute("d").includes("C"));
+
+    // --- manifest ----------------------------------------------------------
+    const manifest = JSON.parse(doc.getElementById("merovarKingdomManifest").textContent);
+    check("manifest schema", manifest.schema === "merovar.kingdom-borders.v1");
+    check("manifest lists kingdom", manifest.kingdoms.length === 1);
+    check("manifest records every field",
+      ["id", "name", "rulingHouse", "capitalSettlementId", "notes", "appearance", "geometry"]
+        .every(k => k in manifest.kingdoms[0]));
+    check("manifest stores every point",
+      manifest.kingdoms[0].geometry.points.length === 4);
+
+    // --- settlements inside -------------------------------------------------
+    const inside = api.getSettlementsInsideKingdom(id);
+    check("settlements inside computed", Array.isArray(inside) && inside.length > 0,
+      `${inside.length} inside`);
+
+    // --- click event ---------------------------------------------------------
+    let fired = null;
+    win.addEventListener("merovar:kingdom-click", e => { fired = e.detail; });
+    api.selectKingdom(id);
+    await sleep(60);
+    check("merovar:kingdom-click fires", fired?.id === id);
+
+    let settlementFired = null;
+    win.addEventListener("merovar:settlement-click", e => { settlementFired = e.detail; });
+    win.MerovarMapAPI.activate(win.MerovarMapAPI.getSettlements()[0].id, "test");
+    await sleep(40);
+    check("merovar:settlement-click still fires", !!settlementFired);
+
+    // --- show / hide ----------------------------------------------------------
+    api.hideKingdom(id);
+    await sleep(60);
+    check("hideKingdom hides fill",
+      doc.querySelector(`.kingdom-fill[data-kingdom-id="${id}"]`).classList.contains("kingdom-hidden"));
+    api.showKingdom(id);
+    await sleep(60);
+    check("showKingdom restores",
+      !doc.querySelector(`.kingdom-fill[data-kingdom-id="${id}"]`).classList.contains("kingdom-hidden"));
+
+    // --- undo / redo -----------------------------------------------------------
+    doc.getElementById("undoButton").click();
+    await sleep(80);
+    check("undo removes the kingdom", api.getAllKingdoms().length === 0,
+      String(api.getAllKingdoms().length));
+    doc.getElementById("redoButton").click();
+    await sleep(80);
+    check("redo restores it", api.getAllKingdoms().length === 1);
+
+    // --- export ---------------------------------------------------------------
+    const exported = JSON.parse(JSON.stringify({
+      kingdoms: api.getAllKingdoms(),
+    }));
+    check("export shape usable", exported.kingdoms[0].geometry.points.length === 4);
+
+    // --- settlements untouched ---------------------------------------------------
+    check("settlement count unchanged after edits",
+      doc.querySelectorAll(".settlement").length === 94);
+    const first = doc.querySelector(".settlement");
+    check("settlement still positioned by map coords",
+      first.style.left.endsWith("px") && first.dataset.mapAnchor === "bottom-center");
+    check("settlements paint above kingdom layer",
+      doc.getElementById("settlementLayer").compareDocumentPosition(doc.getElementById("kingdomLayer"))
+        & Node.DOCUMENT_POSITION_PRECEDING);
+
+    // --- label diagnostics ------------------------------------------------
+    const nameInput = doc.getElementById("editName");
+    nameInput.focus();
+    nameInput.value = "Vareth Dominion";
+    nameInput.dispatchEvent(new win.Event("input", { bubbles: true }));
+    nameInput.blur();
+    await sleep(200);
+    const label = doc.querySelector(".kingdom-label");
+    const labelBox = label.getBoundingClientRect();
+    const labelStyle = win.getComputedStyle(label);
+    check("label text set", label.textContent === "Vareth Dominion", label.textContent);
+    check("label is displayed", labelStyle.display !== "none", labelStyle.display);
+    check("label has on-screen size", labelBox.width > 40 && labelBox.height > 6,
+      `w=${labelBox.width.toFixed(1)} h=${labelBox.height.toFixed(1)} font=${labelStyle.fontSize}`);
+    check("label sits inside the viewport", labelBox.top > 0 && labelBox.left > 0,
+      `top=${labelBox.top.toFixed(0)} left=${labelBox.left.toFixed(0)}`);
+
+    // --- ink line visual weight -------------------------------------------
+    const line = doc.querySelector(".kingdom-line.main");
+    const lineBox = line.getBoundingClientRect();
+    const lineStyle = win.getComputedStyle(line);
+    check("ink stroke ~1.7 screen px",
+      Math.abs(parseFloat(lineStyle.strokeWidth) * (lineBox.width / line.getBBox().width) - 1.7) < 0.6,
+      `computed=${lineStyle.strokeWidth} onScreen=${(parseFloat(lineStyle.strokeWidth) * (lineBox.width / line.getBBox().width)).toFixed(2)}px`);
+
+    // How far does the inked outline actually wander off the straight polygon?
+    const poly = api.getKingdomById(id).geometry.points;
+    const distToPoly = (px, py) => {
+      let min = Infinity;
+      for (let i = 0; i < poly.length; i += 1) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len2 = dx * dx + dy * dy;
+        const t = len2 ? Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / len2)) : 0;
+        min = Math.min(min, Math.hypot(px - (a.x + dx * t), py - (a.y + dy * t)));
+      }
+      return min;
+    };
+    const coords = [...line.getAttribute("d").matchAll(/(-?\d+\.?\d*) (-?\d+\.?\d*)/g)].map(m => [+m[1], +m[2]]);
+    const maxWander = Math.max(...coords.map(([x, y]) => distToPoly(x, y)));
+    const px = lineBox.width / line.getBBox().width;
+    check("outline wanders like ink at fit zoom", maxWander * px > 2.5 && maxWander * px < 26,
+      `${maxWander.toFixed(1)} map units = ${(maxWander * px).toFixed(2)} screen px`);
+    check("vertices stay exactly where clicked",
+      poly.every(p => coords.some(([x, y]) => Math.hypot(x - p.x, y - p.y) < 1.5)),
+      "corner points preserved");
+
+    // --- zoom interaction ---------------------------------------------------
+    const before = doc.querySelector(".kingdom-line.main").getBoundingClientRect().width;
+    viewport.dispatchEvent(new win.WheelEvent("wheel", {
+      clientX: 600, clientY: 400, deltaY: -600, bubbles: true, cancelable: true,
+    }));
+    await sleep(200);
+    const after = doc.querySelector(".kingdom-line.main").getBoundingClientRect().width;
+    check("border scales with zoom", after > before * 1.4, `${before.toFixed(0)} -> ${after.toFixed(0)}`);
+    const zoomedStroke = parseFloat(win.getComputedStyle(doc.querySelector(".kingdom-line.main")).strokeWidth);
+    const zoomedRatio = doc.querySelector(".kingdom-line.main").getBoundingClientRect().width /
+      doc.querySelector(".kingdom-line.main").getBBox().width;
+    check("stroke stays thin when zoomed", Math.abs(zoomedStroke * zoomedRatio - 1.7) < 0.6,
+      `${(zoomedStroke * zoomedRatio).toFixed(2)}px on screen`);
+    const settlementBox = doc.querySelector(".settlement").getBoundingClientRect();
+    check("settlements scale with zoom", settlementBox.width > 10, `${settlementBox.width.toFixed(1)}px`);
+  } catch (error) {
+    check("harness completed", false, `${error && error.message} @ ${error && error.stack?.split("\n")[1]}`);
+  }
+
+  check("no runtime errors", errors.length === 0, errors.join(" | "));
+  const failed = results.filter(r => r.startsWith("FAIL"));
+  document.title = failed.length ? `FAILED ${failed.length}` : `ALL PASS ${results.length}`;
+  document.getElementById("out").textContent = results.join("\n");
+});
+
+frame.src = "/index.html";
+</script>
+</body></html>

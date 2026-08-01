@@ -5,6 +5,8 @@
   "description": "Merovar — Illustrated Settlement Editor",
   "type": "module",
   "scripts": {
+    "build": "node scripts/build-index.mjs",
+    "smoke": "node scripts/smoke.mjs",
     "dev": "node scripts/dev-server.mjs",
     "start": "node scripts/dev-server.mjs"
   }
