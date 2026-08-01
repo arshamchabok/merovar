@@ -215,7 +215,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
 <nav id="toolbar" aria-label="Kingdom border editor controls">
   <button class="tool active" data-mode="move" type="button">Move Map</button>
-  <button class="tool" data-mode="draw" type="button">Draw Kingdom</button>
+  <button class="tool" data-mode="draw" type="button" title="Press and drag to draw an outline; let go to close it">Draw Kingdom</button>
   <button class="tool" data-mode="edit" type="button">Select / Edit Border</button>
   <button class="tool" data-mode="addpoint" type="button">Add Point</button>
   <button class="tool" data-mode="delpoint" type="button">Delete Point</button>
@@ -384,7 +384,8 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   let userAdjustedView = false;
   let mode = "move";
   let selectedId = null;
-  let draftPoints = null;
+  let draftPoints = null;   // corners placed by clicking
+  let strokePoints = null;  // live freehand samples
   let lastDraftClickAt = 0;
   const undoStack = [];
   const redoStack = [];
@@ -457,6 +458,42 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
     }
     return `${d} Z`;
+  }
+
+  // Ramer-Douglas-Peucker. A freehand stroke arrives as hundreds of samples;
+  // this reduces it to the handful of corners that actually describe the shape,
+  // so the border stays editable and the manifest stays readable.
+  function simplifyPath(points, tolerance) {
+    if (points.length < 3) return points.slice();
+    const keep = new Uint8Array(points.length);
+    keep[0] = 1;
+    keep[points.length - 1] = 1;
+    const stack = [[0, points.length - 1]];
+    while (stack.length) {
+      const [first, last] = stack.pop();
+      let furthest = 0;
+      let index = -1;
+      for (let i = first + 1; i < last; i += 1) {
+        const distance = distanceToSegment(points[i].x, points[i].y, points[first], points[last]);
+        if (distance > furthest) { furthest = distance; index = i; }
+      }
+      if (index !== -1 && furthest > tolerance) {
+        keep[index] = 1;
+        stack.push([first, index], [index, last]);
+      }
+    }
+    return points.filter((_, i) => keep[i]);
+  }
+
+  // Keeps handle counts sane no matter how slowly the outline was drawn.
+  function simplifyStroke(points) {
+    let tolerance = 10 / scale;
+    let result = simplifyPath(points, tolerance);
+    while (result.length > 120 && tolerance < 400) {
+      tolerance *= 1.6;
+      result = simplifyPath(points, tolerance);
+    }
+    return result;
   }
 
   function pointInPolygon(x, y, points) {
@@ -787,15 +824,21 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   function renderDraft(cursor) {
     dom.draftGroup.textContent = "";
-    if (!draftPoints || !draftPoints.length) return;
-    const points = cursor ? [...draftPoints, cursor] : draftPoints;
+    const placed = draftPoints || [];
+    const drawn = strokePoints || [];
+    const points = [...placed, ...drawn, ...(cursor ? [cursor] : [])];
+    if (!points.length) return;
+
     const path = svgEl("path");
     path.setAttribute("class", "draft-line");
     const d = points.map((p, i) => `${i ? "L" : "M"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+    // Show the closing edge once there is a shape to close.
     path.setAttribute("d", points.length > 2 ? `${d} Z` : d);
     dom.draftGroup.appendChild(path);
+
+    // Only clicked corners get handles; a freehand stroke would draw hundreds.
     const radius = handleRadius();
-    draftPoints.forEach(point => {
+    placed.forEach(point => {
       const handle = svgEl("circle");
       handle.setAttribute("class", "vertex");
       handle.setAttribute("cx", point.x.toFixed(2));
@@ -1090,14 +1133,14 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   const MODE_HINTS = {
     move: "Drag to pan · scroll to zoom · click a settlement or kingdom for details",
-    draw: "Click to place border points · double-click, Enter or Finish to close · Esc cancels",
+    draw: "Press and drag to draw the outline · let go to close it · Esc cancels · middle-drag to pan",
     edit: "Click a kingdom to select · drag points to reshape · drag inside to move the whole border",
     addpoint: "Click a hollow midpoint handle, or anywhere on the outline, to insert a point",
     delpoint: "Click a border point to remove it (minimum three)",
   };
 
   function setMode(next) {
-    if (next !== "draw" && draftPoints) cancelDraft(false);
+    if (next !== "draw") cancelDraft(false);
     mode = next;
     document.querySelectorAll("#toolbar .tool[data-mode]").forEach(button => {
       button.classList.toggle("active", button.dataset.mode === next);
@@ -1108,7 +1151,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     document.body.classList.toggle("locked-settlements", next !== "move");
     dom.viewport.classList.toggle("drawing", next === "draw");
     dom.viewport.classList.toggle("picking", next === "addpoint" || next === "delpoint");
-    if (next === "draw") { draftPoints = []; renderDraft(null); }
+    if (next === "draw") { draftPoints = []; strokePoints = null; renderDraft(null); }
     dom.modeLabel.textContent = MODE_LABELS[next];
     setStatus(MODE_HINTS[next]);
     updateButtons();
@@ -1116,10 +1159,11 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   }
 
   function updateButtons() {
+    const pending = (draftPoints?.length || 0) + (strokePoints?.length || 0);
     dom.undoButton.disabled = undoStack.length === 0;
     dom.redoButton.disabled = redoStack.length === 0;
-    dom.finishButton.disabled = !(draftPoints && draftPoints.length >= 3);
-    dom.cancelButton.disabled = !(draftPoints && draftPoints.length > 0);
+    dom.finishButton.disabled = pending < 3;
+    dom.cancelButton.disabled = pending === 0;
     dom.deleteKingdomButton.disabled = !selectedId;
   }
 
@@ -1132,27 +1176,39 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   /* ============================================================== drawing */
 
+  // Clicked corners first, then the simplified freehand stroke.
+  function collectDraft() {
+    const placed = draftPoints || [];
+    const drawn = strokePoints && strokePoints.length > 2 ? simplifyStroke(strokePoints) : (strokePoints || []);
+    return [...placed, ...drawn];
+  }
+
   function finishDraft() {
-    if (!draftPoints || draftPoints.length < 3) {
+    const points = collectDraft();
+    if (points.length < 3) {
       setStatus("A kingdom needs at least three points");
       return;
     }
     pushUndo();
     const kingdom = normaliseKingdom({
       name: `Kingdom ${kingdoms.length + 1}`,
-      points: draftPoints.map(p => ({ x: p.x, y: p.y })),
+      points: points.map(p => ({ x: p.x, y: p.y })),
     }, kingdoms.length);
     kingdoms.push(kingdom);
     draftPoints = null;
+    strokePoints = null;
     renderDraft(null);
     selectedId = kingdom.id;
     setMode("edit");
-    afterChange(`Created ${kingdom.name}`);
+    afterChange(`Created ${kingdom.name} — ${kingdom.points.length} points`);
     openInspector();
+    dom.editName.focus();
+    dom.editName.select();
   }
 
   function cancelDraft(announce = true) {
     draftPoints = null;
+    strokePoints = null;
     renderDraft(null);
     updateButtons();
     if (announce) setStatus("Drawing cancelled");
@@ -1171,7 +1227,9 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   }
 
   dom.viewport.addEventListener("pointerdown", event => {
-    if (event.button !== 0 && event.pointerType === "mouse") return;
+    // Middle button always pans — the only way to pan by dragging while drawing.
+    const middleButton = event.button === 1;
+    if (event.pointerType === "mouse" && event.button !== 0 && !middleButton) return;
     try { dom.viewport.setPointerCapture(event.pointerId); } catch (error) { /* synthetic pointer */ }
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     pointerMoved = false;
@@ -1180,19 +1238,30 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       const { cx, cy, dist } = pinchState();
       pinch = { dist: dist || 1, scale, mapX: (cx - offsetX) / scale, mapY: (cy - offsetY) / scale };
       drag = null;
+      // A second finger means "pinch to zoom", not "keep drawing".
+      if (strokePoints) { strokePoints = null; renderDraft(null); updateButtons(); }
       return;
     }
 
     const base = { clientStartX: event.clientX, clientStartY: event.clientY };
+
+    if (mode === "draw" && !middleButton) {
+      // Freehand: the stroke starts here and closes on release.
+      strokePoints = [toMap(event.clientX, event.clientY)];
+      drag = { ...base, kind: "freehand" };
+      renderDraft(null);
+      return;
+    }
+
     const target = hitTest(event.clientX, event.clientY);
     const vertex = target?.closest(".vertex[data-vertex-index]");
-    if (vertex && mode === "edit") {
+    if (vertex && mode === "edit" && !middleButton) {
       drag = { ...base, kind: "vertex", index: Number(vertex.dataset.vertexIndex), snapshotTaken: false, el: vertex };
       vertex.classList.add("dragging");
       return;
     }
 
-    if (mode === "edit" && selectedId) {
+    if (mode === "edit" && selectedId && !middleButton) {
       const fill = target?.closest('.kingdom-fill[data-kingdom-id]');
       if (fill && fill.dataset.kingdomId === selectedId) {
         const start = toMap(event.clientX, event.clientY);
@@ -1225,8 +1294,20 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       return;
     }
 
-    if (mode === "draw" && draftPoints?.length && (!drag || drag.kind !== "pan")) {
-      // Rubber-band the pending edge to the cursor.
+    if (drag?.kind === "freehand") {
+      pointerMoved = true;
+      const point = toMap(event.clientX, event.clientY);
+      const last = strokePoints[strokePoints.length - 1];
+      // Sample every few screen pixels rather than every event.
+      if (Math.hypot(point.x - last.x, point.y - last.y) > 3.5 / scale) {
+        strokePoints.push(point);
+        renderDraft(null);
+      }
+      return;
+    }
+
+    if (mode === "draw" && draftPoints?.length && !drag) {
+      // Rubber-band the pending edge to the cursor between clicked corners.
       renderDraft(toMap(event.clientX, event.clientY));
     }
 
@@ -1269,6 +1350,23 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   function endPointer(event) {
     pointers.delete(event.pointerId);
     if (pointers.size < 2) pinch = null;
+
+    if (drag?.kind === "freehand") {
+      drag = null;
+      dom.viewport.classList.remove("dragging");
+      const drawn = strokePoints || [];
+      // A tap rather than a stroke: fall through and let the click place a corner.
+      if (drawn.length < 3) { strokePoints = null; renderDraft(null); return; }
+      // Keep previously clicked corners only if the stroke carries on from them;
+      // otherwise a stray tap would leave a spike in the outline just drawn.
+      if (draftPoints?.length) {
+        const last = draftPoints[draftPoints.length - 1];
+        if (Math.hypot(drawn[0].x - last.x, drawn[0].y - last.y) > 44 / scale) draftPoints = [];
+      }
+      finishDraft();
+      return;
+    }
+
     if (drag?.el) drag.el.classList.remove("dragging");
     if (drag && (drag.kind === "vertex" || drag.kind === "kingdom") && drag.snapshotTaken) {
       afterChange(drag.kind === "vertex" ? "Point moved" : "Border moved");
@@ -1619,7 +1717,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
 
     if (event.key === "Escape") {
-      if (draftPoints && draftPoints.length) cancelDraft(true);
+      if (draftPoints?.length || strokePoints?.length) cancelDraft(true);
       else if (selectedId) deselect();
       else setMode("move");
       return;
