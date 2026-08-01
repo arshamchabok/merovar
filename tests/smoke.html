@@ -15,14 +15,19 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 try { localStorage.clear(); } catch (e) { /* ignore */ }
 
 // Press, drag along a path, release — the freehand draw gesture.
-function strokeAlong(win, el, path) {
+function strokeAlong(win, el, path, button = 0) {
   const send = (type, x, y, buttons) => el.dispatchEvent(new win.PointerEvent(type, {
     clientX: x, clientY: y, bubbles: true, cancelable: true,
-    button: 0, buttons, pointerId: 3, pointerType: "mouse", isPrimary: true,
+    button, buttons, pointerId: 3, pointerType: "mouse", isPrimary: true,
   }));
   send("pointerdown", path[0][0], path[0][1], 1);
   for (const [x, y] of path.slice(1)) send("pointermove", x, y, 1);
   send("pointerup", path[path.length - 1][0], path[path.length - 1][1], 0);
+}
+
+// Draw the whole loop and come back to the start so it closes.
+function drawClosed(win, el, path) {
+  strokeAlong(win, el, [...path, path[0]]);
 }
 
 // Samples a circle, the way a hand would sweep round a territory.
@@ -103,19 +108,31 @@ frame.addEventListener("load", async () => {
     const viewport = doc.getElementById("viewport");
     doc.querySelector('.tool[data-mode="draw"]').click();
     check("draw mode active", doc.body.classList.contains("mode-draw"));
-    const pts = [[400, 250], [800, 240], [820, 560], [380, 580]];
-    pts.forEach(([x, y]) => clickAt(win, viewport, x, y));
-    check("finish button enabled after 4 points", !doc.getElementById("finishButton").disabled);
+    // Drag round a rectangle, densely enough to look like a hand tracing it.
+    const corners = [[400, 250], [800, 240], [820, 560], [380, 580]];
+    const rect = [];
+    corners.forEach((from, i) => {
+      const to = corners[(i + 1) % corners.length];
+      for (let s = 0; s < 14; s += 1) {
+        rect.push([from[0] + (to[0] - from[0]) * s / 14, from[1] + (to[1] - from[1]) * s / 14]);
+      }
+    });
+    strokeAlong(win, viewport, rect.slice(0, -6)); // stops short of the start
+    await sleep(120);
+    check("unclosed drag leaves a draft, not a kingdom",
+      api.getAllKingdoms().length === 0 && !doc.getElementById("finishButton").disabled);
     doc.getElementById("finishButton").click();
     await sleep(120);
 
     const all = api.getAllKingdoms();
     check("one kingdom created", all.length === 1, String(all.length));
-    check("kingdom has 4 points", all[0]?.geometry.pointCount === 4, String(all[0]?.geometry.pointCount));
+    check("traced rectangle keeps its corners",
+      all[0]?.geometry.pointCount >= 4 && all[0]?.geometry.pointCount <= 14,
+      `${all[0]?.geometry.pointCount} points`);
     const inBounds = all[0]?.geometry.points.every(p =>
       p.x >= 0 && p.x <= 3840 && p.y >= 0 && p.y <= 1645);
     check("points inside 3840x1645 space", inBounds,
-      JSON.stringify(all[0]?.geometry.points));
+      `${all[0]?.geometry.pointCount} points in bounds`);
 
     // --- DOM + metadata ----------------------------------------------------
     const id = all[0].id;
@@ -140,7 +157,7 @@ frame.addEventListener("load", async () => {
       ["id", "name", "rulingHouse", "capitalSettlementId", "notes", "appearance", "geometry"]
         .every(k => k in manifest.kingdoms[0]));
     check("manifest stores every point",
-      manifest.kingdoms[0].geometry.points.length === 4);
+      manifest.kingdoms[0].geometry.points.length === all[0].geometry.pointCount);
 
     // --- settlements inside -------------------------------------------------
     const inside = api.getSettlementsInsideKingdom(id);
@@ -183,7 +200,8 @@ frame.addEventListener("load", async () => {
     const exported = JSON.parse(JSON.stringify({
       kingdoms: api.getAllKingdoms(),
     }));
-    check("export shape usable", exported.kingdoms[0].geometry.points.length === 4);
+    check("export shape usable",
+      exported.kingdoms[0].geometry.points.length === all[0].geometry.pointCount);
 
     // --- settlements untouched ---------------------------------------------------
     check("settlement count unchanged after edits",
@@ -264,7 +282,7 @@ frame.addEventListener("load", async () => {
     await sleep(150);
     const beforeDraw = api.getAllKingdoms().length;
     doc.querySelector('.tool[data-mode="draw"]').click();
-    strokeAlong(win, viewport, circlePath(400, 400, 170, 90));
+    drawClosed(win, viewport, circlePath(400, 400, 170, 90));
     await sleep(200);
     const drawn = api.getAllKingdoms();
     check("freehand stroke creates a kingdom", drawn.length === beforeDraw + 1,
@@ -283,33 +301,102 @@ frame.addEventListener("load", async () => {
     check("freehand points inside map space",
       sketch.geometry.points.every(p => p.x >= 0 && p.x <= 3840 && p.y >= 0 && p.y <= 1645));
 
-    // A tap in draw mode should still place a single corner, not make a kingdom.
+    // --- panning while drawing must never create a kingdom -------------------
+    const worldOf = () => doc.getElementById("world").style.transform;
     doc.querySelector('.tool[data-mode="draw"]').click();
+    const countBeforePan = api.getAllKingdoms().length;
+
+    // At fit zoom the map is centred and clamped, so it cannot pan at all.
+    viewport.dispatchEvent(new win.WheelEvent("wheel", {
+      clientX: 600, clientY: 400, deltaY: -900, bubbles: true, cancelable: true }));
+    await sleep(120);
+    const panBefore = worldOf();
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", bubbles: true }));
+    strokeAlong(win, viewport, [[600, 400], [640, 420], [700, 450], [760, 470]]);
+    win.dispatchEvent(new win.KeyboardEvent("keyup", { code: "Space", bubbles: true }));
+    await sleep(120);
+    check("space-drag pans instead of drawing", worldOf() !== panBefore, "map moved");
+    check("space-drag creates no kingdom", api.getAllKingdoms().length === countBeforePan);
+    check("space-drag leaves no draft", doc.getElementById("cancelButton").disabled === true);
+
+    const rightBefore = worldOf();
+    strokeAlong(win, viewport, [[600, 400], [650, 430], [720, 460]], 2);
+    await sleep(120);
+    check("right-drag pans instead of drawing", worldOf() !== rightBefore);
+    check("right-drag creates no kingdom", api.getAllKingdoms().length === countBeforePan);
+
+    // A plain drag that is not closed must leave a draft, not a kingdom.
+    doc.getElementById("fitButton").click();
+    await sleep(120);
+    strokeAlong(win, viewport, [[300, 300], [420, 300], [520, 380], [560, 470]]);
+    await sleep(120);
+    check("an unclosed stroke creates no kingdom",
+      api.getAllKingdoms().length === countBeforePan, `${api.getAllKingdoms().length}`);
+    check("an unclosed stroke leaves an open draft",
+      doc.getElementById("cancelButton").disabled === false && !!doc.querySelector(".draft-line"));
+    check("resume point marks where drawing continues", !!doc.querySelector(".resume-point"));
+
+    // Zooming between passes must not disturb the outline.
+    const draftBefore = doc.querySelector(".draft-line").getAttribute("d");
+    viewport.dispatchEvent(new win.WheelEvent("wheel", {
+      clientX: 500, clientY: 400, deltaY: -300, bubbles: true, cancelable: true }));
+    await sleep(120);
+    check("outline survives zooming mid-draw",
+      doc.querySelector(".draft-line")?.getAttribute("d") === draftBefore, "geometry unchanged");
+    doc.getElementById("fitButton").click();
+    await sleep(120);
+
+    // A second pass continues the same outline rather than starting over.
+    strokeAlong(win, viewport, [[560, 470], [430, 500], [320, 430]]);
+    await sleep(120);
+    check("a second pass continues the same outline",
+      api.getAllKingdoms().length === countBeforePan && !!doc.querySelector(".draft-line"));
+    doc.getElementById("finishButton").click();
+    await sleep(200);
+    check("Finish closes a multi-pass outline",
+      api.getAllKingdoms().length === countBeforePan + 1,
+      `${api.getAllKingdoms().length}`);
+    const multi = api.getAllKingdoms().at(-1);
+    check("multi-pass shape is simple", !selfIntersects(multi.geometry.points),
+      `${multi.geometry.pointCount} points`);
+
+    // A tap in draw mode should do nothing at all now.
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    const countBeforeTap = api.getAllKingdoms().length;
     clickAt(win, viewport, 700, 300);
     await sleep(80);
-    check("a tap places a corner instead of closing",
-      api.getAllKingdoms().length === drawn.length && doc.getElementById("cancelButton").disabled === false);
-    doc.getElementById("cancelButton").click();
-    await sleep(60);
-    check("cancel clears the draft", doc.getElementById("cancelButton").disabled === true);
+    check("a tap in draw mode creates nothing",
+      api.getAllKingdoms().length === countBeforeTap &&
+      doc.getElementById("cancelButton").disabled === true);
 
-    // A stray tap must not leave a spike in the next freehand outline.
-    clickAt(win, viewport, 1000, 650);
-    await sleep(60);
-    strokeAlong(win, viewport, circlePath(400, 300, 120, 70));
+    drawClosed(win, viewport, circlePath(400, 300, 120, 70));
     await sleep(200);
     const latest = api.getAllKingdoms().at(-1);
     const strayFar = latest.geometry.points.some(p => {
       const others = latest.geometry.points.filter(q => q !== p);
       return others.every(q => Math.hypot(p.x - q.x, p.y - q.y) > 700);
     });
-    check("stray tap is discarded, no spike in the shape", !strayFar,
-      `${latest.geometry.pointCount} points`);
+    check("no spike from the earlier tap", !strayFar, `${latest.geometry.pointCount} points`);
+
+    // Backspace drops the last pass only.
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    strokeAlong(win, viewport, [[300, 300], [400, 320], [480, 360]]);
+    strokeAlong(win, viewport, [[480, 360], [500, 460], [420, 500]]);
+    await sleep(100);
+    const twoPass = doc.querySelector(".draft-line").getAttribute("d").length;
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+    await sleep(100);
+    check("Backspace removes only the last pass",
+      doc.querySelector(".draft-line") &&
+      doc.querySelector(".draft-line").getAttribute("d").length < twoPass, "outline shortened");
+    doc.getElementById("cancelButton").click();
+    await sleep(60);
+    check("cancel clears the draft", doc.getElementById("cancelButton").disabled === true);
 
     // --- the reported bug: drawing back over your own starting point --------
     doc.querySelector('.tool[data-mode="draw"]').click();
     // 1.25 turns with tremor: the hand goes round and carries on past the start.
-    strokeAlong(win, viewport, circlePath(430, 380, 150, 150, 1.25, 9));
+    drawClosed(win, viewport, circlePath(430, 380, 150, 150, 1.25, 9));
     await sleep(220);
     const looped = api.getAllKingdoms().at(-1);
     check("overshooting the start still makes one clean kingdom",
@@ -337,7 +424,7 @@ frame.addEventListener("load", async () => {
 
     // A tremor-heavy stroke should not come out visibly jagged.
     doc.querySelector('.tool[data-mode="draw"]').click();
-    strokeAlong(win, viewport, circlePath(430, 380, 150, 160, 1, 14));
+    drawClosed(win, viewport, circlePath(430, 380, 150, 160, 1, 14));
     await sleep(220);
     const shakyCount = api.getAllKingdoms().length;
     const shaky = api.getAllKingdoms().at(-1);
