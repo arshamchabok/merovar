@@ -237,6 +237,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 <nav id="toolbar" aria-label="Kingdom border editor controls">
   <button class="tool active" data-mode="move" type="button">Move Map</button>
   <button class="tool" data-mode="draw" type="button" title="Press and drag to draw an outline; let go to close it">Draw Kingdom</button>
+  <button class="tool" data-mode="island" type="button" title="Draw another landmass belonging to the selected kingdom">Add Island</button>
   <button class="tool" data-mode="edit" type="button">Select / Edit Border</button>
   <button class="tool" data-mode="addpoint" type="button">Add Point</button>
   <button class="tool" data-mode="delpoint" type="button">Delete Point</button>
@@ -304,6 +305,9 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     <input id="editFillOpacity" type="range" min="0" max="0.45" step="0.01">
   </label>
   <label class="field">Notes<textarea id="editNotes" placeholder="Optional notes"></textarea></label>
+  <label class="field">Absorb another kingdom
+    <select id="mergeKingdom"><option value="">Choose a kingdom…</option></select>
+  </label>
   <div class="inspector-actions">
     <button id="duplicateButton" class="tool" type="button">Duplicate</button>
     <button id="deleteButton" class="tool danger" type="button">Delete</button>
@@ -386,6 +390,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     editFillOpacity: document.getElementById("editFillOpacity"),
     fillOpacityValue: document.getElementById("fillOpacityValue"),
     editNotes: document.getElementById("editNotes"),
+    mergeKingdom: document.getElementById("mergeKingdom"),
     finishButton: document.getElementById("finishButton"),
     cancelButton: document.getElementById("cancelButton"),
     undoButton: document.getElementById("undoButton"),
@@ -706,6 +711,36 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     return { x: sum.x / points.length, y: sum.y / points.length };
   }
 
+  function signedArea(points) {
+    let sum = 0;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+      sum += (points[j].x + points[i].x) * (points[j].y - points[i].y);
+    }
+    return sum / 2;
+  }
+
+  // All rings wound the same way, so a nonzero fill never punches a hole where
+  // one island happens to sit inside another's bounding area.
+  const windSameWay = (points) => (signedArea(points) < 0 ? points.slice().reverse() : points);
+
+  function unionBox(boxes) {
+    const minX = Math.min(...boxes.map(b => b.minX));
+    const minY = Math.min(...boxes.map(b => b.minY));
+    const maxX = Math.max(...boxes.map(b => b.maxX));
+    const maxY = Math.max(...boxes.map(b => b.maxY));
+    return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+  }
+
+  /* ------------------------------------------- multi-part kingdom helpers */
+  // A kingdom is one or more disjoint rings: a mainland plus its islands.
+  const allPoints = (kingdom) => kingdom.parts.flat();
+  const totalPoints = (kingdom) => kingdom.parts.reduce((n, part) => n + part.length, 0);
+  const kingdomArea = (kingdom) => kingdom.parts.reduce((sum, part) => sum + polygonArea(part), 0);
+  const largestPart = (kingdom) =>
+    kingdom.parts.reduce((best, part) => (polygonArea(part) > polygonArea(best) ? part : best), kingdom.parts[0]);
+  const insideKingdom = (kingdom, x, y) =>
+    kingdom.parts.some(part => part.length >= 3 && pointInPolygon(x, y, part));
+
   // Approximate pole of inaccessibility: the interior point furthest from any
   // edge. Keeps names inside concave territories instead of outside them.
   function labelAnchor(points) {
@@ -736,13 +771,16 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   function normaliseKingdom(raw, index) {
     const palette = PALETTE[index % PALETTE.length];
-    const points = (Array.isArray(raw.points) ? raw.points : [])
+    const cleanRing = (ring) => windSameWay((Array.isArray(ring) ? ring : [])
       .map(p => ({ x: Number(p.x), y: Number(p.y) }))
-      .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+      .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)));
+    // `points` is the pre-islands single-ring form and is still accepted.
+    const source = Array.isArray(raw.parts) && raw.parts.length ? raw.parts : [raw.points];
+    const parts = source.map(cleanRing).filter(ring => ring.length >= 3);
     return {
       id: typeof raw.id === "string" && raw.id ? raw.id : uid("kingdom"),
       name: typeof raw.name === "string" ? raw.name : `Kingdom ${index + 1}`,
-      points,
+      parts,
       borderColor: /^#[0-9a-f]{6}$/i.test(raw.borderColor || "") ? raw.borderColor : palette.border,
       fillColor: /^#[0-9a-f]{6}$/i.test(raw.fillColor || "") ? raw.fillColor : palette.fill,
       fillOpacity: clamp(Number(raw.fillOpacity ?? 0.1) || 0, 0, 0.45),
@@ -769,7 +807,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
     // A freshly exported HTML wins over an older browser autosave.
     const source = stored && Number(stored.savedAt) >= embedded.savedAt ? stored.kingdoms : embedded.kingdoms;
-    kingdoms = source.map(normaliseKingdom).filter(k => k.points.length >= 3);
+    kingdoms = source.map(normaliseKingdom).filter(k => k.parts.length > 0);
   }
 
   let saveTimer = null;
@@ -832,21 +870,32 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   const pathCache = new Map();
 
   function geometryFor(kingdom) {
-    const signature = kingdom.points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(";");
+    const signature = kingdom.parts
+      .map(part => part.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(";"))
+      .join("|");
     const cached = pathCache.get(kingdom.id);
     if (cached && cached.signature === signature) return cached;
     const seed = hashSeed(kingdom.id);
-    // Two passes with different seeds give the doubled-back look of a pen line.
-    const inner = roughenPolygon(kingdom.points, seed, 1);
-    const outer = roughenPolygon(kingdom.points, seed + 977, 1.4);
-    const anchor = labelAnchor(kingdom.points);
+    // Every part becomes a subpath of the same fill and the same ink line, so a
+    // mainland and its islands read as one territory.
+    const mains = [];
+    const unders = [];
+    kingdom.parts.forEach((part, index) => {
+      const offset = index * 1319;
+      // Two passes with different seeds give the doubled-back look of a pen line.
+      mains.push(smoothClosedPath(roughenPolygon(part, seed + offset, 1)));
+      unders.push(smoothClosedPath(roughenPolygon(part, seed + offset + 977, 1.4)));
+    });
+    // The name belongs on the biggest landmass, not in the sea between parts.
+    const anchor = labelAnchor(largestPart(kingdom));
     const entry = {
       signature,
-      main: smoothClosedPath(inner),
-      under: smoothClosedPath(outer),
+      main: mains.join(" "),
+      under: unders.join(" "),
       label: anchor.point,
       clearance: anchor.clearance,
-      box: boundingBox(kingdom.points),
+      box: unionBox(kingdom.parts.map(boundingBox)),
+      labelBox: boundingBox(largestPart(kingdom)),
     };
     pathCache.set(kingdom.id, entry);
     return entry;
@@ -890,7 +939,8 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     el.dataset.rulingHouse = kingdom.rulingHouse;
     el.dataset.capitalId = kingdom.capitalId;
     el.dataset.kingdomRole = role;
-    el.dataset.pointCount = String(kingdom.points.length);
+    el.dataset.pointCount = String(totalPoints(kingdom));
+    el.dataset.partCount = String(kingdom.parts.length);
     el.dataset.borderColor = kingdom.borderColor;
     el.dataset.fillColor = kingdom.fillColor;
     el.dataset.fillOpacity = String(kingdom.fillOpacity);
@@ -953,32 +1003,36 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     if (!kingdom || kingdom.hidden) return;
     const radius = handleRadius();
 
-    if (mode === "edit" || mode === "addpoint") {
-      kingdom.points.forEach((point, index) => {
-        const next = kingdom.points[(index + 1) % kingdom.points.length];
-        const mid = svgEl("circle");
-        mid.setAttribute("class", "midpoint");
-        mid.setAttribute("cx", ((point.x + next.x) / 2).toFixed(2));
-        mid.setAttribute("cy", ((point.y + next.y) / 2).toFixed(2));
-        mid.setAttribute("r", (radius * 0.62).toFixed(2));
-        mid.dataset.insertAfter = String(index);
-        dom.handleGroup.appendChild(mid);
-      });
-    }
-
-    kingdom.points.forEach((point, index) => {
-      const handle = svgEl("circle");
-      handle.setAttribute("class", "vertex");
-      handle.setAttribute("cx", point.x.toFixed(2));
-      handle.setAttribute("cy", point.y.toFixed(2));
-      handle.setAttribute("r", radius.toFixed(2));
-      handle.dataset.vertexIndex = String(index);
-      dom.handleGroup.appendChild(handle);
-      // Handles are rebuilt every frame of a drag; keep the grabbed one lit.
-      if (drag && drag.kind === "vertex" && drag.index === index) {
-        handle.classList.add("dragging");
-        drag.el = handle;
+    kingdom.parts.forEach((part, partIndex) => {
+      if (mode === "edit" || mode === "addpoint") {
+        part.forEach((point, index) => {
+          const next = part[(index + 1) % part.length];
+          const mid = svgEl("circle");
+          mid.setAttribute("class", "midpoint");
+          mid.setAttribute("cx", ((point.x + next.x) / 2).toFixed(2));
+          mid.setAttribute("cy", ((point.y + next.y) / 2).toFixed(2));
+          mid.setAttribute("r", (radius * 0.62).toFixed(2));
+          mid.dataset.insertAfter = String(index);
+          mid.dataset.partIndex = String(partIndex);
+          dom.handleGroup.appendChild(mid);
+        });
       }
+
+      part.forEach((point, index) => {
+        const handle = svgEl("circle");
+        handle.setAttribute("class", "vertex");
+        handle.setAttribute("cx", point.x.toFixed(2));
+        handle.setAttribute("cy", point.y.toFixed(2));
+        handle.setAttribute("r", radius.toFixed(2));
+        handle.dataset.vertexIndex = String(index);
+        handle.dataset.partIndex = String(partIndex);
+        dom.handleGroup.appendChild(handle);
+        // Handles are rebuilt every frame of a drag; keep the grabbed one lit.
+        if (drag && drag.kind === "vertex" && drag.index === index && drag.part === partIndex) {
+          handle.classList.add("dragging");
+          drag.el = handle;
+        }
+      });
     });
   }
 
@@ -1168,12 +1222,14 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   /* ====================================================== kingdom manifest */
 
   function settlementsInside(kingdom) {
-    if (kingdom.points.length < 3) return [];
+    if (!kingdom.parts.length) return [];
     return settlements
       .map((item, index) => ({ item, index }))
-      .filter(({ item }) => pointInPolygon(Number(item.x), Number(item.y), kingdom.points))
+      .filter(({ item }) => insideKingdom(kingdom, Number(item.x), Number(item.y)))
       .map(({ item, index }) => settlementRecord(item, index));
   }
+
+  const round = (points) => points.map(p => ({ x: Number(p.x.toFixed(2)), y: Number(p.y.toFixed(2)) }));
 
   function kingdomRecord(kingdom) {
     const geometry = geometryFor(kingdom);
@@ -1193,12 +1249,25 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
         style: "hand-inked-parchment",
       },
       geometry: {
-        pointCount: kingdom.points.length,
-        points: kingdom.points.map(p => ({ x: Number(p.x.toFixed(2)), y: Number(p.y.toFixed(2)) })),
-        centroid: centroid(kingdom.points),
+        pointCount: totalPoints(kingdom),
+        partCount: kingdom.parts.length,
+        // Every landmass of the territory. Disjoint rings, all wound the same
+        // way; none of them is a hole.
+        parts: kingdom.parts.map((part, index) => ({
+          index,
+          role: part === largestPart(kingdom) ? "mainland" : "island",
+          pointCount: part.length,
+          points: round(part),
+          centroid: centroid(part),
+          boundingBox: boundingBox(part),
+          areaSquareUnits: Math.round(polygonArea(part)),
+        })),
+        // Kept for readers written before islands existed: the mainland ring.
+        points: round(largestPart(kingdom)),
+        centroid: centroid(allPoints(kingdom)),
         labelAnchor: geometry.label,
         boundingBox: geometry.box,
-        areaSquareUnits: Math.round(polygonArea(kingdom.points)),
+        areaSquareUnits: Math.round(kingdomArea(kingdom)),
         coordinateSystem: { width: MAP_WIDTH, height: MAP_HEIGHT, origin: "top-left" },
       },
       settlementsInside: { count: inside.length, ids: inside.map(s => s.id) },
@@ -1308,14 +1377,18 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   const MODE_LABELS = {
     move: "Move Map",
     draw: "Draw Kingdom",
+    island: "Add Island",
     edit: "Select / Edit Border",
     addpoint: "Add Point",
     delpoint: "Delete Point",
   };
 
+  const DRAW_MODES = ["draw", "island"];
+
   const MODE_HINTS = {
     move: "Drag to pan · scroll to zoom · click a settlement or kingdom for details",
     draw: "Drag to draw · let go to zoom or pan, then keep drawing · close on the start circle or press Finish · hold Space (or right/middle-drag) to pan · Backspace undoes the last stroke",
+    island: "Draw another landmass to add to the selected kingdom · it stays part of the same territory",
     edit: "Click a kingdom to select · drag points to reshape · drag inside to move the whole border",
     addpoint: "Click a hollow midpoint handle, or anywhere on the outline, to insert a point",
     delpoint: "Click a border point to remove it (minimum three)",
@@ -1326,20 +1399,23 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
       document.activeElement.blur();
     }
-    if (next !== "draw") cancelDraft(false);
+    if (!DRAW_MODES.includes(next)) cancelDraft(false);
     mode = next;
     document.querySelectorAll("#toolbar .tool[data-mode]").forEach(button => {
       button.classList.toggle("active", button.dataset.mode === next);
     });
-    document.body.classList.remove("mode-move", "mode-draw", "mode-edit", "mode-addpoint", "mode-delpoint");
+    document.body.classList.remove("mode-move", "mode-draw", "mode-island", "mode-edit", "mode-addpoint", "mode-delpoint");
     document.body.classList.add(`mode-${next}`);
     // Settlements should not swallow clicks that are meant for the border tools.
     document.body.classList.toggle("locked-settlements", next !== "move");
-    dom.viewport.classList.toggle("drawing", next === "draw");
+    dom.viewport.classList.toggle("drawing", DRAW_MODES.includes(next));
     dom.viewport.classList.toggle("picking", next === "addpoint" || next === "delpoint");
-    if (next === "draw") { draftSegments = []; activeSegment = null; renderDraft(); }
+    if (DRAW_MODES.includes(next)) { draftSegments = []; activeSegment = null; renderDraft(); }
     dom.modeLabel.textContent = MODE_LABELS[next];
     setStatus(MODE_HINTS[next]);
+    if (next === "island" && !selectedId) {
+      setStatus("Select a kingdom first — or just draw, and it becomes a new one");
+    }
     updateButtons();
     renderHandles();
   }
@@ -1383,18 +1459,32 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       setStatus("Draw a bit more before finishing");
       return;
     }
+    const ring = windSameWay(points.map(p => ({ x: p.x, y: p.y })));
+    const target = mode === "island" ? byId(selectedId) : null;
+
     pushUndo();
-    const kingdom = normaliseKingdom({
-      name: `Kingdom ${kingdoms.length + 1}`,
-      points: points.map(p => ({ x: p.x, y: p.y })),
-    }, kingdoms.length);
-    kingdoms.push(kingdom);
     draftSegments = null;
     activeSegment = null;
     renderDraft();
+
+    // Add Island mode appends the new landmass to the selected kingdom instead
+    // of creating a territory of its own.
+    if (target) {
+      target.parts.push(ring);
+      pathCache.delete(target.id);
+      afterChange(`Added an island to ${target.name} — ${target.parts.length} parts`);
+      openInspector();
+      return;
+    }
+
+    const kingdom = normaliseKingdom({
+      name: `Kingdom ${kingdoms.length + 1}`,
+      parts: [ring],
+    }, kingdoms.length);
+    kingdoms.push(kingdom);
     selectedId = kingdom.id;
     setMode("edit");
-    afterChange(`Created ${kingdom.name} — ${kingdom.points.length} points`);
+    afterChange(`Created ${kingdom.name} — ${totalPoints(kingdom)} points`);
     openInspector();
     dom.editName.focus();
     dom.editName.select();
@@ -1461,7 +1551,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
     const base = { clientStartX: event.clientX, clientStartY: event.clientY };
 
-    if (mode === "draw" && !wantsPan) {
+    if (DRAW_MODES.includes(mode) && !wantsPan) {
       // Start a new pass of the outline. Releasing does not close it unless you
       // are back at the start, so pausing to zoom or pan costs nothing.
       draftSegments = draftSegments || [];
@@ -1475,7 +1565,12 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     const target = hitTest(event.clientX, event.clientY);
     const vertex = target?.closest(".vertex[data-vertex-index]");
     if (vertex && mode === "edit" && !wantsPan) {
-      drag = { ...base, kind: "vertex", index: Number(vertex.dataset.vertexIndex), snapshotTaken: false, el: vertex };
+      drag = {
+        ...base, kind: "vertex",
+        part: Number(vertex.dataset.partIndex),
+        index: Number(vertex.dataset.vertexIndex),
+        snapshotTaken: false, el: vertex,
+      };
       vertex.classList.add("dragging");
       return;
     }
@@ -1488,7 +1583,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
           ...base,
           kind: "kingdom",
           startX: start.x, startY: start.y,
-          origin: byId(selectedId).points.map(p => ({ ...p })),
+          origin: byId(selectedId).parts.map(part => part.map(p => ({ ...p }))),
           snapshotTaken: false,
         };
         return;
@@ -1543,7 +1638,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     if (drag.kind === "vertex") {
       if (!drag.snapshotTaken) { pushUndo(); drag.snapshotTaken = true; }
       const point = toMap(event.clientX, event.clientY);
-      kingdom.points[drag.index] = point;
+      if (kingdom.parts[drag.part]) kingdom.parts[drag.part][drag.index] = point;
       render();
       return;
     }
@@ -1553,10 +1648,11 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       const current = toMap(event.clientX, event.clientY);
       const dx = current.x - drag.startX;
       const dy = current.y - drag.startY;
-      kingdom.points = drag.origin.map(p => ({
+      // Islands travel with the mainland.
+      kingdom.parts = drag.origin.map(part => part.map(p => ({
         x: clamp(p.x + dx, 0, MAP_WIDTH),
         y: clamp(p.y + dy, 0, MAP_HEIGHT),
-      }));
+      })));
       render();
     }
   });
@@ -1602,17 +1698,23 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     const target = hitTest(event.clientX, event.clientY);
     const point = toMap(event.clientX, event.clientY);
 
-    if (mode === "draw") return; // drawing is a drag; a click means nothing here
+    if (DRAW_MODES.includes(mode)) return; // drawing is a drag; a click means nothing here
     if (mode === "edit" && target?.closest(".vertex[data-vertex-index]")) return;
 
     if (mode === "delpoint" && selectedId) {
       const vertex = target?.closest(".vertex[data-vertex-index]");
-      if (vertex) { deletePoint(Number(vertex.dataset.vertexIndex)); return; }
+      if (vertex) {
+        deletePoint(Number(vertex.dataset.partIndex), Number(vertex.dataset.vertexIndex));
+        return;
+      }
     }
 
     if ((mode === "addpoint" || mode === "edit") && selectedId) {
       const mid = target?.closest(".midpoint[data-insert-after]");
-      if (mid) { insertPoint(Number(mid.dataset.insertAfter), point); return; }
+      if (mid) {
+        insertPoint(Number(mid.dataset.partIndex), Number(mid.dataset.insertAfter), point);
+        return;
+      }
       if (mode === "addpoint") { insertPointNearest(point); return; }
     }
 
@@ -1634,7 +1736,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   });
 
   dom.viewport.addEventListener("dblclick", event => {
-    if (mode === "draw") { finishDraft(); return; }
+    if (DRAW_MODES.includes(mode)) { finishDraft(); return; }
     if (!hitTest(event.clientX, event.clientY)?.closest('[data-map-entity="kingdom"]')) {
       zoomAt(scale * 1.6, event.clientX, event.clientY);
     }
@@ -1647,34 +1749,50 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
 
   /* ======================================================== point editing */
 
-  function insertPoint(afterIndex, point) {
+  function insertPoint(partIndex, afterIndex, point) {
     const kingdom = byId(selectedId);
-    if (!kingdom) return;
+    if (!kingdom?.parts[partIndex]) return;
     pushUndo();
-    kingdom.points.splice(afterIndex + 1, 0, point);
+    kingdom.parts[partIndex].splice(afterIndex + 1, 0, point);
     afterChange("Point added");
   }
 
   function insertPointNearest(point) {
     const kingdom = byId(selectedId);
     if (!kingdom) return;
-    let bestIndex = 0;
+    let best = null;
     let bestDistance = Infinity;
-    kingdom.points.forEach((p, index) => {
-      const d = distanceToSegment(point.x, point.y, p, kingdom.points[(index + 1) % kingdom.points.length]);
-      if (d < bestDistance) { bestDistance = d; bestIndex = index; }
+    kingdom.parts.forEach((part, partIndex) => {
+      part.forEach((p, index) => {
+        const d = distanceToSegment(point.x, point.y, p, part[(index + 1) % part.length]);
+        if (d < bestDistance) { bestDistance = d; best = { partIndex, index }; }
+      });
     });
     // Far-away clicks would drag a spike out of the outline.
-    if (bestDistance > 34 / scale) { setStatus("Click closer to the outline to insert a point"); return; }
-    insertPoint(bestIndex, point);
+    if (!best || bestDistance > 34 / scale) {
+      setStatus("Click closer to the outline to insert a point");
+      return;
+    }
+    insertPoint(best.partIndex, best.index, point);
   }
 
-  function deletePoint(index) {
+  function deletePoint(partIndex, index) {
     const kingdom = byId(selectedId);
-    if (!kingdom) return;
-    if (kingdom.points.length <= 3) { setStatus("A kingdom needs at least three points"); return; }
+    const part = kingdom?.parts[partIndex];
+    if (!part) return;
+    // A part below three points is no longer a shape: drop the whole island.
+    if (part.length <= 3) {
+      if (kingdom.parts.length === 1) {
+        setStatus("A kingdom needs at least three points");
+        return;
+      }
+      pushUndo();
+      kingdom.parts.splice(partIndex, 1);
+      afterChange("Island removed");
+      return;
+    }
     pushUndo();
-    kingdom.points.splice(index, 1);
+    part.splice(index, 1);
     afterChange("Point removed");
   }
 
@@ -1711,10 +1829,22 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     const kingdom = byId(selectedId);
     if (!kingdom) { dom.inspector.classList.add("hidden"); return; }
     const record = kingdomRecord(kingdom);
+    const parts = kingdom.parts.length;
     dom.inspectorTitle.textContent = kingdom.name || "Kingdom";
     dom.inspectorMeta.textContent =
-      `${kingdom.points.length} points · ${record.settlementsInside.count} settlements inside · ` +
+      `${totalPoints(kingdom)} points · ${parts === 1 ? "one landmass" : `${parts} landmasses`} · ` +
+      `${record.settlementsInside.count} settlements inside · ` +
       `${(record.geometry.areaSquareUnits / 1000).toFixed(0)}k sq units`;
+    // Absorbing a kingdom keeps its shape but folds it into this territory.
+    dom.mergeKingdom.innerHTML = '<option value="">Choose a kingdom…</option>';
+    kingdoms.filter(other => other.id !== kingdom.id).forEach(other => {
+      const option = document.createElement("option");
+      option.value = other.id;
+      option.textContent = `${other.name} (${other.parts.length} part${other.parts.length === 1 ? "" : "s"})`;
+      dom.mergeKingdom.appendChild(option);
+    });
+    dom.mergeKingdom.value = "";
+    dom.mergeKingdom.disabled = kingdoms.length < 2;
     if (document.activeElement !== dom.editName) dom.editName.value = kingdom.name;
     if (document.activeElement !== dom.editHouse) dom.editHouse.value = kingdom.rulingHouse;
     if (document.activeElement !== dom.editNotes) dom.editNotes.value = kingdom.notes;
@@ -1759,6 +1889,11 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
   editField(dom.editBorderColor, (k, v) => { k.borderColor = v; });
   editField(dom.editFillColor, (k, v) => { k.fillColor = v; });
   editField(dom.editFillOpacity, (k, v) => { k.fillOpacity = clamp(Number(v) || 0, 0, 0.45); });
+  dom.mergeKingdom.addEventListener("change", () => {
+    const otherId = dom.mergeKingdom.value;
+    if (!otherId || !selectedId) return;
+    mergeKingdomInto(selectedId, otherId);
+  });
   dom.editCapital.addEventListener("change", () => {
     const kingdom = byId(selectedId);
     if (!kingdom) return;
@@ -1767,6 +1902,21 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     afterChange("Capital set");
   });
 
+  // Folds another kingdom's landmasses into this one and removes it. The way to
+  // repair territories that were drawn as separate kingdoms by mistake.
+  function mergeKingdomInto(hostId, otherId) {
+    const host = byId(hostId);
+    const other = byId(otherId);
+    if (!host || !other || host === other) return;
+    pushUndo();
+    host.parts.push(...other.parts.map(part => part.map(p => ({ ...p }))));
+    kingdoms = kingdoms.filter(k => k.id !== other.id);
+    pathCache.delete(host.id);
+    selectedId = host.id;
+    afterChange(`${other.name} absorbed into ${host.name} — ${host.parts.length} parts`);
+    openInspector();
+  }
+
   function duplicateKingdom() {
     const kingdom = byId(selectedId);
     if (!kingdom) return;
@@ -1774,10 +1924,10 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     const copy = clone(kingdom);
     copy.id = uid("kingdom");
     copy.name = `${kingdom.name} (copy)`;
-    copy.points = kingdom.points.map(p => ({
+    copy.parts = kingdom.parts.map(part => part.map(p => ({
       x: clamp(p.x + 70, 0, MAP_WIDTH),
       y: clamp(p.y + 70, 0, MAP_HEIGHT),
-    }));
+    })));
     kingdoms.push(copy);
     selectedId = copy.id;
     afterChange(`Duplicated as ${copy.name}`);
@@ -1827,7 +1977,7 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
     if (!Array.isArray(incoming)) { setStatus("No kingdoms found in that file"); return; }
     const valid = incoming
       .map((raw, index) => normaliseKingdom(raw, index))
-      .filter(k => k.points.length >= 3);
+      .filter(k => k.parts.length > 0);
     if (!valid.length) { setStatus("No kingdoms with three or more points"); return; }
     if (kingdoms.length && !window.confirm(`Replace ${kingdoms.length} existing kingdom(s) with ${valid.length} imported?`)) return;
     pushUndo();
@@ -1929,8 +2079,8 @@ body.mode-addpoint .midpoint { fill:rgba(244,213,152,.55); }
       else setMode("move");
       return;
     }
-    if (event.key === "Enter" && mode === "draw") { finishDraft(); return; }
-    if (event.key === "Backspace" && mode === "draw") {
+    if (event.key === "Enter" && DRAW_MODES.includes(mode)) { finishDraft(); return; }
+    if (event.key === "Backspace" && DRAW_MODES.includes(mode)) {
       event.preventDefault();
       undoLastSegment();
       return;

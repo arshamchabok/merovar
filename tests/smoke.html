@@ -76,6 +76,8 @@ frame.addEventListener("load", async () => {
   const doc = frame.contentDocument;
   const errors = [];
   win.addEventListener("error", e => errors.push(String(e.message)));
+  // A native dialog stalls headless virtual time, so answer them in code.
+  win.confirm = () => true;
 
   try {
     await sleep(400);
@@ -393,6 +395,119 @@ frame.addEventListener("load", async () => {
     await sleep(60);
     check("cancel clears the draft", doc.getElementById("cancelButton").disabled === true);
 
+    // --- islands and separate landmasses -------------------------------------
+    doc.getElementById("fitButton").click();
+    await sleep(120);
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    drawClosed(win, viewport, circlePath(350, 380, 120, 60));
+    await sleep(200);
+    const mainland = api.getAllKingdoms().at(-1);
+    const beforeIsland = api.getAllKingdoms().length;
+    check("mainland starts as one part", mainland.geometry.partCount === 1);
+
+    doc.querySelector('.tool[data-mode="island"]').click();
+    check("add island mode active", doc.body.classList.contains("mode-island"));
+    drawClosed(win, viewport, circlePath(620, 300, 55, 40));
+    await sleep(200);
+    check("island does not become a separate kingdom",
+      api.getAllKingdoms().length === beforeIsland,
+      `${api.getAllKingdoms().length} kingdoms`);
+    const withIsland = api.getKingdomById(mainland.id);
+    check("island joins the selected kingdom", withIsland.geometry.partCount === 2,
+      `${withIsland.geometry.partCount} parts`);
+    check("parts labelled mainland and island",
+      withIsland.geometry.parts.map(p => p.role).sort().join(",") === "island,mainland",
+      withIsland.geometry.parts.map(p => `${p.role}:${p.pointCount}`).join(" "));
+    check("area counts both landmasses",
+      withIsland.geometry.areaSquareUnits >
+      withIsland.geometry.parts.find(p => p.role === "mainland").areaSquareUnits);
+
+    // One fill, one ink line, one name — but two subpaths.
+    const islandFill = doc.querySelector(`.kingdom-fill[data-kingdom-id="${mainland.id}"]`);
+    check("both parts drawn in a single fill",
+      (islandFill.getAttribute("d").match(/M /g) || []).length === 2,
+      `${(islandFill.getAttribute("d").match(/M /g) || []).length} subpaths`);
+    check("still one label for the whole kingdom",
+      doc.querySelectorAll(`.kingdom-label[data-kingdom-id="${mainland.id}"]`).length === 1);
+    check("data-part-count exposed", islandFill.dataset.partCount === "2");
+
+    // The name must sit on the mainland, not adrift between the parts.
+    const labelEl = doc.querySelector(`.kingdom-label[data-kingdom-id="${mainland.id}"]`);
+    const mainRing = withIsland.geometry.parts.find(p => p.role === "mainland");
+    const anchor = withIsland.geometry.labelAnchor;
+    const insideMain = (() => {
+      let hit = false;
+      const pts = mainRing.points;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i, i += 1) {
+        if ((pts[i].y > anchor.y) !== (pts[j].y > anchor.y) &&
+          anchor.x < ((pts[j].x - pts[i].x) * (anchor.y - pts[i].y)) / (pts[j].y - pts[i].y) + pts[i].x) hit = !hit;
+      }
+      return hit;
+    })();
+    check("name sits on the mainland", insideMain && !!labelEl);
+
+    // Editing reaches every part.
+    doc.querySelector('.tool[data-mode="edit"]').click();
+    api.selectKingdom(mainland.id);
+    await sleep(120);
+    const handleParts = new Set([...doc.querySelectorAll(".vertex[data-vertex-index]")]
+      .map(h => h.dataset.partIndex));
+    check("handles appear on both parts", handleParts.size === 2,
+      `parts with handles: ${[...handleParts].join(",")}`);
+    check("handle count matches total points",
+      doc.querySelectorAll(".vertex[data-vertex-index]").length === withIsland.geometry.pointCount);
+
+    // Settlements inside either landmass belong to the kingdom.
+    const insideBoth = api.getSettlementsInsideKingdom(mainland.id).length;
+    check("settlements counted across parts", insideBoth >= withIsland.settlementsInside.count,
+      `${insideBoth} inside`);
+
+    // Moving the kingdom must carry the island with it.
+    const beforeMove = api.getKingdomById(mainland.id).geometry.parts.map(p => p.centroid);
+    const fillBox = islandFill.getBoundingClientRect();
+    strokeAlong(win, viewport, [
+      [fillBox.left + fillBox.width / 2, fillBox.top + fillBox.height / 2],
+      [fillBox.left + fillBox.width / 2 + 40, fillBox.top + fillBox.height / 2 + 25],
+      [fillBox.left + fillBox.width / 2 + 70, fillBox.top + fillBox.height / 2 + 40],
+    ]);
+    await sleep(150);
+    const afterMove = api.getKingdomById(mainland.id).geometry.parts.map(p => p.centroid);
+    const shifted = afterMove.map((c, i) => ({
+      dx: c.x - beforeMove[i].x, dy: c.y - beforeMove[i].y,
+    }));
+    check("island moves with the mainland",
+      shifted.every(s => Math.abs(s.dx) > 1) &&
+      Math.abs(shifted[0].dx - shifted[1].dx) < 1.5 &&
+      Math.abs(shifted[0].dy - shifted[1].dy) < 1.5,
+      shifted.map(s => `${s.dx.toFixed(0)},${s.dy.toFixed(0)}`).join(" | "));
+
+    // --- merging kingdoms drawn separately by mistake -------------------------
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    drawClosed(win, viewport, circlePath(880, 520, 70, 45));
+    await sleep(200);
+    const strayId = api.getAllKingdoms().at(-1).id;
+    const countBeforeMerge = api.getAllKingdoms().length;
+    api.selectKingdom(mainland.id);
+    await sleep(120);
+    const mergeSelect = doc.getElementById("mergeKingdom");
+    check("merge list offers the other kingdom",
+      [...mergeSelect.options].some(o => o.value === strayId));
+    mergeSelect.value = strayId;
+    mergeSelect.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await sleep(200);
+    check("merging removes the absorbed kingdom",
+      api.getAllKingdoms().length === countBeforeMerge - 1,
+      `${api.getAllKingdoms().length} kingdoms`);
+    check("merged kingdom gained the part",
+      api.getKingdomById(mainland.id).geometry.partCount === 3,
+      `${api.getKingdomById(mainland.id).geometry.partCount} parts`);
+    doc.getElementById("undoButton").click();
+    await sleep(150);
+    check("merge is undoable",
+      api.getAllKingdoms().length === countBeforeMerge &&
+      api.getKingdomById(mainland.id).geometry.partCount === 2);
+
+
     // --- the reported bug: drawing back over your own starting point --------
     doc.querySelector('.tool[data-mode="draw"]').click();
     // 1.25 turns with tremor: the hand goes round and carries on past the start.
@@ -461,6 +576,39 @@ frame.addEventListener("load", async () => {
     await sleep(200);
     check("releasing on the target closes the shape",
       api.getAllKingdoms().length === shakyCount + 1 && !doc.querySelector(".snap-target"));
+    // --- legacy single-ring data still loads ----------------------------------
+    // Runs last: importing replaces every kingdom.
+    const legacy = JSON.stringify({
+      kingdoms: [{
+        id: "legacy-1", name: "Old Realm", borderColor: "#4a3527", fillColor: "#8a6a4e",
+        fillOpacity: 0.1, notes: "", rulingHouse: "", capitalId: "",
+        points: [{ x: 500, y: 400 }, { x: 900, y: 420 }, { x: 880, y: 700 }, { x: 520, y: 690 }],
+      }],
+    });
+    const importedOk = (() => {
+      try {
+        win.eval(`(${function (json) {
+          const input = document.getElementById("importJsonInput");
+          const file = new File([json], "k.json", { type: "application/json" });
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          input.files = dt.files;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        }.toString()})(${JSON.stringify(legacy)})`);
+        return true;
+      } catch (e) { return false; }
+    })();
+    if (importedOk) {
+      await sleep(900);
+      const old = api.getAllKingdoms().find(k => k.name === "Old Realm");
+      check("legacy points-only kingdom still loads", !!old && old.geometry.partCount === 1,
+        old ? `${old.geometry.pointCount} points` : "not imported");
+      check("legacy kingdom keeps compat points array",
+        !!old && Array.isArray(old.geometry.points) && old.geometry.points.length === 4);
+    } else {
+      check("legacy import harness ran", false, "could not drive the file input");
+    }
+
   } catch (error) {
     check("harness completed", false, `${error && error.message} @ ${error && error.stack?.split("\n")[1]}`);
   }
