@@ -611,17 +611,42 @@ frame.addEventListener("load", async () => {
       return { ox: Number(m[1]), oy: Number(m[2]), s: Number(m[3]) };
     };
 
+    // Same measurement against the curve that is actually painted, wobble and
+    // all — what you see rather than what is stored.
+    const strayOfRenderedInk = (path, worldScale) => {
+      const d = [...doc.querySelectorAll(".kingdom-line.main")].at(-1).getAttribute("d");
+      const nodes = [...d.matchAll(/(-?\d+\.?\d*) (-?\d+\.?\d*)/g)]
+        .map(m => ({ x: Number(m[1]), y: Number(m[2]) }))
+        .filter((_, i) => i % 3 === 2); // on-curve endpoints of each cubic
+      let worst = 0;
+      for (const [sx, sy] of path) {
+        const map = { x: (sx - worldScale.ox) / worldScale.s, y: (sy - worldScale.oy) / worldScale.s };
+        let best = Infinity;
+        for (let i = 0; i < nodes.length; i += 1) {
+          const a = nodes[i], b = nodes[(i + 1) % nodes.length];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const len2 = dx * dx + dy * dy;
+          const t = len2 ? Math.max(0, Math.min(1, ((map.x - a.x) * dx + (map.y - a.y) * dy) / len2)) : 0;
+          best = Math.min(best, Math.hypot(map.x - (a.x + dx * t), map.y - (a.y + dy * t)));
+        }
+        worst = Math.max(worst, best);
+      }
+      return worst * worldScale.s;
+    };
+
     const measureDetail = async (value) => {
       doc.getElementById("drawDetail").value = value;
       doc.querySelector('.tool[data-mode="draw"]').click();
       drawClosed(win, viewport, detailed);
       await sleep(250);
       const made = api.getAllKingdoms().at(-1);
-      const stray = strayFromDrawn(made, detailed, readWorld());
+      const world = readWorld();
+      const stray = strayFromDrawn(made, detailed, world);
+      const inkStray = strayOfRenderedInk(detailed, world);
       api.selectKingdom(made.id);
       doc.getElementById("deleteButton").click();
       await sleep(150);
-      return { points: made.geometry.pointCount, stray };
+      return { points: made.geometry.pointCount, stray, inkStray };
     };
 
     const rough = await measureDetail("7");
@@ -641,6 +666,16 @@ frame.addEventListener("load", async () => {
       `rough ${rough.stray.toFixed(2)}px vs fine ${fine.stray.toFixed(2)}px`);
     check("detail setting does not explode the point count",
       exact.points <= 400, `${exact.points} points`);
+    check("the painted ink sits on the drawn line at Exact",
+      exact.inkStray < 1.5, `${exact.inkStray.toFixed(2)}px worst gap, ink as rendered`);
+    check("Exact adds no pen wobble of its own",
+      exact.inkStray - exact.stray < 0.4,
+      `ink ${exact.inkStray.toFixed(2)}px vs stored ${exact.stray.toFixed(2)}px`);
+    check("the painted ink stays close at Fine",
+      fine.inkStray < 3.5, `${fine.inkStray.toFixed(2)}px worst gap, ink as rendered`);
+    check("looser settings keep their pen character",
+      rough.inkStray > exact.inkStray,
+      `rough ${rough.inkStray.toFixed(2)}px vs exact ${exact.inkStray.toFixed(2)}px`);
 
     // Simplify is the way back if a border ends up over-detailed.
     doc.getElementById("drawDetail").value = "1";
@@ -765,6 +800,76 @@ frame.addEventListener("load", async () => {
       saved.settlements.filter(s => s.id.startsWith("city-17") || s.id.startsWith("town-17") ||
         s.id.startsWith("castle-17")).length >= 90, `${saved.settlements.length} total`);
 
+    // --- ruling house, population and soldiers --------------------------------
+    const setField = (id, value) => {
+      const field = doc.getElementById(id);
+      field.focus();
+      field.value = value;
+      field.dispatchEvent(new win.Event("input", { bubbles: true }));
+      field.blur();
+    };
+    setField("sHouse", "Vharn");
+    setField("sPopulation", "12400");
+    setField("sSoldiers", "830");
+    await sleep(200);
+    const holding = win.MerovarMapAPI.getSettlement(fresh.id);
+    check("settlement records a ruling house", holding.rulingHouse === "Vharn", holding.rulingHouse);
+    check("settlement records a population", holding.population === 12400, String(holding.population));
+    check("settlement records a soldier count", holding.soldiers === 830, String(holding.soldiers));
+    const holdEl = doc.querySelector(`[data-settlement-id="${fresh.id}"]`);
+    check("figures exposed as data attributes",
+      holdEl.dataset.rulingHouse === "Vharn" && holdEl.dataset.population === "12400" &&
+      holdEl.dataset.soldiers === "830");
+    check("house suggestions offered from names already in use",
+      [...doc.querySelectorAll("#houseNames option")].some(o => o.value === "Vharn"));
+
+    setField("sPopulation", "");
+    await sleep(150);
+    check("a blank population means unrecorded, not zero",
+      win.MerovarMapAPI.getSettlement(fresh.id).population === null,
+      String(win.MerovarMapAPI.getSettlement(fresh.id).population));
+    setField("sPopulation", "12400");
+    await sleep(150);
+
+    // Realm totals should add up only what has actually been recorded.
+    doc.querySelector('.tool[data-mode="draw"]').click();
+    const around = win.MerovarMapAPI.getSettlement(fresh.id).coordinates;
+    const wv = /translate\(([-\d.]+)px,\s*([-\d.]+)px\) scale\(([\d.]+)\)/
+      .exec(doc.getElementById("world").style.transform);
+    const toScreen = (p) => [Number(wv[1]) + p.x * Number(wv[3]), Number(wv[2]) + p.y * Number(wv[3])];
+    const centre = toScreen(around);
+    drawClosed(win, viewport, Array.from({ length: 60 }, (_, i) => {
+      const a = (i / 60) * Math.PI * 2;
+      return [centre[0] + Math.cos(a) * 90, centre[1] + Math.sin(a) * 70];
+    }));
+    await sleep(250);
+    const realmId = api.getAllKingdoms().at(-1).id;
+    win.MerovarStage.present();
+    await sleep(500);
+    win.MerovarStage.focus(realmId);
+    await sleep(400);
+    const labels = [...doc.querySelectorAll("#plateStats dt")].map(d => d.textContent);
+    const values = [...doc.querySelectorAll("#plateStats dd")].map(d => d.textContent);
+    check("realm plate totals the population of its settlements",
+      labels.includes("Population"), labels.join(","));
+    check("realm plate totals the soldiers",
+      labels.includes("Soldiers"), labels.join(","));
+    check("partial records are marked as partial",
+      values.some(v => /\d+ of \d+/.test(v)) || !labels.includes("Population"),
+      values.join(" | "));
+    win.MerovarStage.edit();
+    await sleep(200);
+    api.selectKingdom(realmId);
+    doc.getElementById("deleteButton").click();
+    await sleep(150);
+
+    doc.querySelector('.tool[data-mode="settlement"]').click();
+    selectSettlementForDelete: {
+      const el = doc.querySelector(`[data-settlement-id="${fresh.id}"]`);
+      const r = el.getBoundingClientRect();
+      clickAt(win, viewport, r.left + r.width / 2, r.bottom - 2);
+    }
+    await sleep(150);
     doc.getElementById("sDelete").click();
     await sleep(150);
     check("delete removes it", win.MerovarMapAPI.getSettlements().length === beforePlace,

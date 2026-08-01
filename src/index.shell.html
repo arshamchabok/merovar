@@ -540,6 +540,14 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       <option value="castle">Castle</option>
     </select>
   </label>
+  <label class="field">Ruling house
+    <input id="sHouse" type="text" maxlength="80" placeholder="Optional" list="houseNames">
+  </label>
+  <datalist id="houseNames"></datalist>
+  <div class="inline-fields">
+    <label class="field">Population<input id="sPopulation" type="number" min="0" max="100000000" step="1" placeholder="—"></label>
+    <label class="field">Soldiers<input id="sSoldiers" type="number" min="0" max="100000000" step="1" placeholder="—"></label>
+  </div>
   <div class="field">Design<div id="sDesignGrid" class="design-mini-grid"></div></div>
   <div class="inline-fields">
     <label class="field">Width<input id="sWidth" type="number" min="20" max="200" step="1"></label>
@@ -699,6 +707,9 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     sName: document.getElementById("sName"),
     sType: document.getElementById("sType"),
     sDesignGrid: document.getElementById("sDesignGrid"),
+    sHouse: document.getElementById("sHouse"),
+    sPopulation: document.getElementById("sPopulation"),
+    sSoldiers: document.getElementById("sSoldiers"),
     sWidth: document.getElementById("sWidth"),
     sRotation: document.getElementById("sRotation"),
     sNotes: document.getElementById("sNotes"),
@@ -981,7 +992,9 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   // Tolerance is a screen distance, so drawing zoomed in genuinely captures
   // finer geography rather than just bigger numbers.
   const detailTolerance = () => detailPx() / scale;
-  const sampleSpacing = () => Math.max(1.1, detailPx() * 0.8) / scale;
+  // At Exact, sample below one screen pixel: the stored path is then limited by
+  // the digitiser rather than by anything this code does.
+  const sampleSpacing = () => Math.max(0.5, detailPx() * 0.7) / scale;
   const smoothingPasses = () => (detailPx() >= 7 ? 2 : detailPx() >= 2 ? 1 : 0);
 
   // Simplify only as far as the detail setting allows, with a high ceiling so a
@@ -1119,6 +1132,9 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       borderColor: /^#[0-9a-f]{6}$/i.test(raw.borderColor || "") ? raw.borderColor : palette.border,
       fillColor: /^#[0-9a-f]{6}$/i.test(raw.fillColor || "") ? raw.fillColor : palette.fill,
       fillOpacity: clamp(Number(raw.fillOpacity ?? 0.1) || 0, 0, 0.45),
+      // How much pen wobble this outline carries, fixed when it was drawn.
+      // 0 means the painted line lies exactly on the traced path.
+      inkCharacter: clamp(Number(raw.inkCharacter ?? 1), 0, 1.5),
       notes: typeof raw.notes === "string" ? raw.notes : "",
       rulingHouse: typeof raw.rulingHouse === "string" ? raw.rulingHouse : "",
       capitalId: typeof raw.capitalId === "string" ? raw.capitalId : "",
@@ -1140,8 +1156,20 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       opacity: Number(raw.opacity ?? 1),
       name: typeof raw.name === "string" ? raw.name : "",
       notes: typeof raw.notes === "string" ? raw.notes : "",
+      rulingHouse: typeof raw.rulingHouse === "string" ? raw.rulingHouse : "",
+      // null rather than 0: "not recorded" and "nobody lives here" differ.
+      population: countOrNull(raw.population),
+      soldiers: countOrNull(raw.soldiers),
     };
   }
+
+  function countOrNull(value) {
+    if (value === "" || value === null || value === undefined) return null;
+    const number = Math.round(Number(value));
+    return Number.isFinite(number) && number >= 0 ? number : null;
+  }
+
+  const groupDigits = (n) => n.toLocaleString("en-GB");
 
   // Same rule as kingdoms: a freshly exported HTML beats an older autosave.
   function readStored(key, embeddedNode, listKey) {
@@ -1261,7 +1289,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   const pathCache = new Map();
 
   function geometryFor(kingdom) {
-    const signature = kingdom.parts
+    const signature = `${kingdom.inkCharacter}#` + kingdom.parts
       .map(part => part.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(";"))
       .join("|");
     const cached = pathCache.get(kingdom.id);
@@ -1273,9 +1301,10 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     const unders = [];
     kingdom.parts.forEach((part, index) => {
       const offset = index * 1319;
+      const character = kingdom.inkCharacter;
       // Two passes with different seeds give the doubled-back look of a pen line.
-      mains.push(smoothClosedPath(roughenPolygon(part, seed + offset, 1)));
-      unders.push(smoothClosedPath(roughenPolygon(part, seed + offset + 977, 1.4)));
+      mains.push(smoothClosedPath(roughenPolygon(part, seed + offset, character)));
+      unders.push(smoothClosedPath(roughenPolygon(part, seed + offset + 977, character * 1.4)));
     });
     // The name belongs on the biggest landmass, not in the sea between parts.
     // The anchor search is O(grid x edges), so run it on a coarse copy of a
@@ -1554,6 +1583,9 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       el.dataset.rotation = String(item.rotation || 0);
       el.dataset.settlementName = item.name || "";
       el.dataset.settlementNotes = item.notes || "";
+      el.dataset.rulingHouse = item.rulingHouse || "";
+      el.dataset.population = item.population === null ? "" : String(item.population);
+      el.dataset.soldiers = item.soldiers === null ? "" : String(item.soldiers);
       el.dataset.interaction = "open-settlement-detail";
       el.dataset.clickEvent = "merovar:settlement-click";
       el.setAttribute("role", "button");
@@ -1597,6 +1629,9 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       displayName: item.name || `${capitalize(type)} ${index + 1}`,
       name: item.name || "",
       notes: item.notes || "",
+      rulingHouse: item.rulingHouse || "",
+      population: item.population ?? null,
+      soldiers: item.soldiers ?? null,
       coordinates: {
         x: Number(item.x), y: Number(item.y),
         anchor: "bottom-center", mapWidth: MAP_WIDTH, mapHeight: MAP_HEIGHT,
@@ -1670,7 +1705,8 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
         borderColor: kingdom.borderColor,
         fillColor: kingdom.fillColor,
         fillOpacity: kingdom.fillOpacity,
-        style: "hand-inked-parchment",
+        inkCharacter: kingdom.inkCharacter,
+        style: kingdom.inkCharacter === 0 ? "traced-exact" : "hand-inked-parchment",
       },
       geometry: {
         pointCount: totalPoints(kingdom),
@@ -1816,7 +1852,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     settlement: "Click the map to place the chosen artwork · click one to select · drag to move · Delete removes it",
     draw: "Drag to draw · let go to zoom or pan, then keep drawing · close on the start circle or press Finish · hold Space (or right/middle-drag) to pan · Backspace undoes the last stroke",
     island: "Draw another landmass to add to the selected kingdom · it stays part of the same territory",
-    edit: "Click a kingdom to select · drag points to reshape · drag inside to move the whole border",
+    edit: "Click a kingdom to select · drag points to reshape (hold Shift for quarter-speed) · drag inside to move the whole border",
     addpoint: "Click a hollow midpoint handle, or anywhere on the outline, to insert a point",
     delpoint: "Click a border point to remove it (minimum three)",
   };
@@ -1857,6 +1893,17 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     dom.finishButton.disabled = pending < 3;
     dom.cancelButton.disabled = pending === 0;
     dom.deleteKingdomButton.disabled = !selectedId;
+  }
+
+  // Live figures while a stroke is in progress, so precision work is not blind.
+  function reportDrawing() {
+    const total = draftPath().length;
+    if (!total) return;
+    const last = draftPath()[total - 1];
+    dom.saveState.textContent =
+      `${total} samples · ${last.x.toFixed(1)}, ${last.y.toFixed(1)} · ` +
+      `${detailPx()}px detail at ${(scale * 100).toFixed(0)}% zoom`;
+    clearTimeout(statusTimer);
   }
 
   let statusTimer = null;
@@ -1912,6 +1959,8 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     const kingdom = normaliseKingdom({
       name: `Kingdom ${kingdoms.length + 1}`,
       parts: [ring],
+      // Precise outlines are painted as drawn; looser ones keep pen character.
+      inkCharacter: detailPx() <= 1 ? 0 : detailPx() <= 2.5 ? 0.4 : detailPx() <= 4 ? 0.7 : 1,
     }, kingdoms.length);
     kingdoms.push(kingdom);
     selectedId = kingdom.id;
@@ -2058,13 +2107,26 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
     if (drag?.kind === "freehand" && activeSegment) {
       pointerMoved = true;
-      const point = toMap(event.clientX, event.clientY);
-      const last = activeSegment[activeSegment.length - 1];
-      // Sampling has to be finer than the detail setting or precision is lost
-      // before simplification ever runs.
-      if (Math.hypot(point.x - last.x, point.y - last.y) > sampleSpacing()) {
-        activeSegment.push(point);
+      // The browser delivers one pointermove per frame but the digitiser
+      // samples far faster. Coalesced events are the real path the hand took —
+      // without them a quick stroke is decimated to ~60 points a second.
+      const moves = typeof event.getCoalescedEvents === "function"
+        ? event.getCoalescedEvents() : [event];
+      const spacing = sampleSpacing();
+      let added = false;
+      for (const move of (moves.length ? moves : [event])) {
+        const point = toMap(move.clientX, move.clientY);
+        const last = activeSegment[activeSegment.length - 1];
+        // Sampling has to be finer than the detail setting or precision is lost
+        // before simplification ever runs.
+        if (Math.hypot(point.x - last.x, point.y - last.y) > spacing) {
+          activeSegment.push(point);
+          added = true;
+        }
+      }
+      if (added) {
         renderDraft();
+        reportDrawing();
       }
       return;
     }
@@ -2097,9 +2159,24 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
     if (drag.kind === "vertex") {
       if (!drag.snapshotTaken) { pushUndo(); drag.snapshotTaken = true; }
-      const point = toMap(event.clientX, event.clientY);
+      const cursor = toMap(event.clientX, event.clientY);
+      // Shift drags at quarter speed for placing a point exactly. Re-anchoring
+      // whenever Shift changes means neither entering nor leaving fine mode
+      // makes the point jump.
+      const fine = event.shiftKey;
+      if (drag.fine !== fine) {
+        drag.fine = fine;
+        drag.anchorPoint = { ...kingdom.parts[drag.part][drag.index] };
+        drag.anchorCursor = cursor;
+      }
+      const rate = fine ? 0.25 : 1;
+      const point = {
+        x: clamp(drag.anchorPoint.x + (cursor.x - drag.anchorCursor.x) * rate, 0, MAP_WIDTH),
+        y: clamp(drag.anchorPoint.y + (cursor.y - drag.anchorCursor.y) * rate, 0, MAP_HEIGHT),
+      };
       if (kingdom.parts[drag.part]) kingdom.parts[drag.part][drag.index] = point;
       render();
+      dom.saveState.textContent = `Point ${drag.index + 1} · ${point.x.toFixed(1)}, ${point.y.toFixed(1)}`;
       return;
     }
 
@@ -2423,7 +2500,15 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     if (document.activeElement !== dom.sNotes) dom.sNotes.value = item.notes;
     if (document.activeElement !== dom.sWidth) dom.sWidth.value = String(Math.round(item.width));
     if (document.activeElement !== dom.sRotation) dom.sRotation.value = String(item.rotation || 0);
+    if (document.activeElement !== dom.sHouse) dom.sHouse.value = item.rulingHouse;
+    if (document.activeElement !== dom.sPopulation) {
+      dom.sPopulation.value = item.population === null ? "" : String(item.population);
+    }
+    if (document.activeElement !== dom.sSoldiers) {
+      dom.sSoldiers.value = item.soldiers === null ? "" : String(item.soldiers);
+    }
     dom.sType.value = item.type;
+    refreshHouseNames();
 
     dom.sDesignGrid.textContent = "";
     (iconLibrary[item.type] || []).forEach(icon => {
@@ -2440,6 +2525,23 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
         afterSettlementChange("Design changed");
       });
       dom.sDesignGrid.appendChild(button);
+    });
+  }
+
+  // Houses already in use, so the same name is not retyped three ways.
+  function refreshHouseNames() {
+    const names = new Set();
+    kingdoms.forEach(k => { if (k.rulingHouse) names.add(k.rulingHouse); });
+    settlements.forEach(s => { if (s.rulingHouse) names.add(s.rulingHouse); });
+    const list = document.getElementById("houseNames");
+    const current = [...list.options].map(o => o.value).join("|");
+    const next = [...names].sort();
+    if (current === next.join("|")) return;
+    list.textContent = "";
+    next.forEach(name => {
+      const option = document.createElement("option");
+      option.value = name;
+      list.appendChild(option);
     });
   }
 
@@ -2521,6 +2623,9 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   }
 
   settlementField(dom.sName, (item, value) => { item.name = value; });
+  settlementField(dom.sHouse, (item, value) => { item.rulingHouse = value; });
+  settlementField(dom.sPopulation, (item, value) => { item.population = countOrNull(value); });
+  settlementField(dom.sSoldiers, (item, value) => { item.soldiers = countOrNull(value); });
   settlementField(dom.sNotes, (item, value) => { item.notes = value; });
   settlementField(dom.sWidth, (item, value) => { item.width = clamp(Number(value) || item.width, 20, 200); });
   settlementField(dom.sRotation, (item, value) => { item.rotation = clamp(Number(value) || 0, -180, 180); });
@@ -3024,14 +3129,30 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     stage.plateHouse.textContent = kingdom.rulingHouse ? `House ${kingdom.rulingHouse}` : "";
     stage.plateHouse.style.display = kingdom.rulingHouse ? "" : "none";
 
+    // Only sum what has actually been recorded, and say so when it is partial.
+    const withPopulation = inside.filter(s => s.population !== null);
+    const withSoldiers = inside.filter(s => s.soldiers !== null);
+    const population = withPopulation.reduce((sum, s) => sum + s.population, 0);
+    const soldiers = withSoldiers.reduce((sum, s) => sum + s.soldiers, 0);
+
     const rows = [
       ["Settlements", String(inside.length)],
       ["Cities", String(counts.city || 0)],
       ["Towns", String(counts.town || 0)],
       ["Castles", String(counts.castle || 0)],
-      ["Landmasses", String(kingdom.parts.length)],
-      ["Area", `${(record.geometry.areaSquareUnits / 1000).toFixed(0)}k sq units`],
     ];
+    if (withPopulation.length) {
+      rows.push(["Population", withPopulation.length === inside.length
+        ? groupDigits(population)
+        : `${groupDigits(population)} (${withPopulation.length} of ${inside.length})`]);
+    }
+    if (withSoldiers.length) {
+      rows.push(["Soldiers", withSoldiers.length === inside.length
+        ? groupDigits(soldiers)
+        : `${groupDigits(soldiers)} (${withSoldiers.length} of ${inside.length})`]);
+    }
+    rows.push(["Landmasses", String(kingdom.parts.length)]);
+    rows.push(["Area", `${(record.geometry.areaSquareUnits / 1000).toFixed(0)}k sq units`]);
     if (capital) {
       const capitalIndex = settlements.filter(s => s.type === capital.type).indexOf(capital) + 1;
       rows.unshift(["Capital", capital.name || `${capitalize(capital.type)} ${capitalIndex}`]);
@@ -3095,8 +3216,12 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
         stage.tip.innerHTML = "";
         const strong = document.createElement("b");
         strong.textContent = item.name || `${capitalize(item.type)} ${index}`;
+        const facts = [capitalize(item.type)];
+        if (item.rulingHouse) facts.push(`House ${item.rulingHouse}`);
+        if (item.population !== null) facts.push(`${groupDigits(item.population)} souls`);
+        if (item.soldiers !== null) facts.push(`${groupDigits(item.soldiers)} soldiers`);
         const meta = document.createElement("span");
-        meta.textContent = ` · ${Math.round(item.x)}, ${Math.round(item.y)}`;
+        meta.textContent = ` · ${facts.join(" · ")}`;
         stage.tip.append(strong, meta);
         stage.tip.style.left = `${event.clientX}px`;
         stage.tip.style.top = `${event.clientY - 8}px`;
