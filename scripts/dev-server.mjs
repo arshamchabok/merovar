@@ -30,8 +30,10 @@ const MIME = {
 };
 
 // Appended to every HTML response; reconnects and reloads on change.
+// The attribute is how "Save as file…" finds and drops this again — matching on
+// the script's text would also match the application code that mentions it.
 const LIVE_RELOAD = `
-<script>
+<script data-dev-reload>
 (() => {
   let es;
   const connect = () => {

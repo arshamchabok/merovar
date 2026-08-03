@@ -477,8 +477,9 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   <label class="control"><input id="showBorders" type="checkbox" checked> Borders</label>
   <label class="control"><input id="showNames" type="checkbox" checked> Names</label>
   <div class="separator"></div>
-  <button id="saveButton" class="tool" type="button">Save</button>
-  <button id="saveHtmlButton" class="tool" type="button">Save Edited HTML</button>
+  <button id="saveButton" class="tool" type="button" title="Keep your work in this browser">Save</button>
+  <button id="saveHtmlButton" class="tool" type="button" title="Write a standalone HTML file of the map as it stands">Save as file…</button>
+  <button id="previewHtmlButton" class="tool" type="button" title="Open that standalone file in a new tab">Preview file</button>
   <button id="exportJsonButton" class="tool" type="button">Export Kingdom JSON</button>
   <button id="importJsonButton" class="tool" type="button">Import Kingdom JSON</button>
   <input id="importJsonInput" type="file" accept=".json,application/json" hidden>
@@ -2772,7 +2773,9 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     afterChange(`Imported ${valid.length} kingdom${valid.length === 1 ? "" : "s"}`);
   }
 
-  function saveEditedHtml() {
+  // The whole map as one self-contained document: artwork, settlements,
+  // kingdoms, both manifests and the code, with no runtime state baked in.
+  function buildStandaloneHtml() {
     persist(true);
     const cloneDoc = document.documentElement.cloneNode(true);
     const savedAt = Date.now();
@@ -2790,13 +2793,48 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     ["#kingdomFills", "#kingdomStrokes", "#kingdomLabels", "#draftGroup", "#handleGroup"]
       .forEach(selector => { cloneDoc.querySelector(selector).innerHTML = ""; });
     cloneDoc.querySelector("#inspector").classList.add("hidden");
-    // The dev server injects a live-reload script; it must not travel with the file.
-    cloneDoc.querySelectorAll("script").forEach(node => {
-      if (node.textContent.includes("__dev/reload")) node.remove();
-    });
-    const finalHtml = `<!doctype html>\n${cloneDoc.outerHTML}`;
-    downloadBlob(new Blob([finalHtml], { type: "text/html;charset=utf-8" }), "merovar-map-with-kingdoms.html");
-    setStatus("Standalone HTML downloaded");
+    // The dev server injects a live-reload script; it must not travel with the
+    // file. Matched by attribute, never by content: this very script mentions
+    // the reload path, so a text match would delete the whole application.
+    cloneDoc.querySelectorAll("script[data-dev-reload]").forEach(node => node.remove());
+    return `<!doctype html>\n${cloneDoc.outerHTML}`;
+  }
+
+  const standaloneBlob = () =>
+    new Blob([buildStandaloneHtml()], { type: "text/html;charset=utf-8" });
+
+  async function saveAsFile() {
+    const blob = standaloneBlob();
+    // A real save dialog where the browser offers one, so the file can go
+    // straight into the project folder — over index.html if that is the intent.
+    if (typeof window.showSaveFilePicker === "function") {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: "merovar-map.html",
+          types: [{ description: "Web page", accept: { "text/html": [".html"] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        setStatus(`Saved as ${handle.name}`);
+        return;
+      } catch (error) {
+        if (error && error.name === "AbortError") { setStatus("Save cancelled"); return; }
+        // Any other failure falls through to a plain download.
+      }
+    }
+    downloadBlob(blob, "merovar-map.html");
+    setStatus("Saved to your downloads as merovar-map.html");
+  }
+
+  // Kept alive deliberately: revoking it would break the tab showing it.
+  let previewUrl = null;
+  function previewFile() {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = URL.createObjectURL(standaloneBlob());
+    // The hash asks that copy to open on the map rather than the tools.
+    const opened = window.open(`${previewUrl}#view`, "_blank");
+    setStatus(opened ? "Preview opened in a new tab" : "Allow pop-ups to preview the file");
   }
 
   /* ================================================================ wiring */
@@ -2827,7 +2865,8 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     persist(true);
     setStatus(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   });
-  document.getElementById("saveHtmlButton").addEventListener("click", saveEditedHtml);
+  document.getElementById("saveHtmlButton").addEventListener("click", saveAsFile);
+  document.getElementById("previewHtmlButton").addEventListener("click", previewFile);
   document.getElementById("exportJsonButton").addEventListener("click", exportKingdomJson);
   const importInput = document.getElementById("importJsonInput");
   document.getElementById("importJsonButton").addEventListener("click", () => importInput.click());
@@ -3327,10 +3366,13 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   const OPENS_WITH = "editor";
   // ---------------------------------------------------------------------
 
+  // A blob URL carries no query string, so the hash works as well as ?view.
   const params = new URLSearchParams(location.search);
-  const opening = params.has("view") ? "showcase"
-    : params.has("edit") ? "editor"
-    : OPENS_WITH;
+  const hash = location.hash.replace(/^#/, "");
+  const asked = params.has("view") || hash === "view" ? "showcase"
+    : params.has("edit") || hash === "edit" ? "editor"
+    : null;
+  const opening = asked || OPENS_WITH;
 
   if (opening === "showcase") {
     setPresenting(true);
@@ -3338,6 +3380,12 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   } else {
     setPresenting(false);
   }
+
+  window.MerovarFile = Object.freeze({
+    html: () => buildStandaloneHtml(),
+    save: () => saveAsFile(),
+    preview: () => previewFile(),
+  });
 
   window.MerovarStage = Object.freeze({
     present: () => { setPresenting(true); playIntro(); },
