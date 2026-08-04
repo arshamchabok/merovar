@@ -60,6 +60,22 @@ frame.addEventListener("load", async () => {
   const worldNow = doc.getElementById("world").style.transform;
   say(`  zoom reached: ${/scale\(([\d.]+)\)/.exec(worldNow)?.[1]}`);
 
+  // How much scrolling does it take to actually zoom in?
+  const scaleNow = () => Number(/scale\(([\d.]+)\)/.exec(doc.getElementById("world").style.transform)[1]);
+  doc.getElementById("fitButton").click();
+  await sleep(300);
+  const fitScale = scaleNow();
+  for (let i = 0; i < 6; i += 1) {
+    viewport.dispatchEvent(new win.WheelEvent("wheel", {
+      clientX: 640, clientY: 400, deltaY: -100, bubbles: true, cancelable: true }));
+    await sleep(60);
+  }
+  await sleep(300);
+  say(`6 mouse notches: ${fitScale.toFixed(3)}x -> ${scaleNow().toFixed(3)}x ` +
+      `(${(scaleNow() / fitScale).toFixed(1)}x deeper)`);
+  doc.getElementById("fitButton").click();
+  await sleep(300);
+
   time("pan: 200 trackpad swipe events", () => {
     for (let i = 0; i < 200; i += 1) {
       viewport.dispatchEvent(new win.WheelEvent("wheel", {

@@ -660,6 +660,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
   const MAP_WIDTH = 3840;
   const MAP_HEIGHT = 1645;
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const MIN_SCALE = 0.08;
   const MAX_SCALE = 8;
   const KINGDOM_STORAGE_KEY = "merovar-kingdom-borders-v1";
@@ -1853,6 +1854,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   }
 
   function fitMap() {
+    cancelZoom();
     const { w, h } = viewSize();
     const reserve = w <= 1100 ? 64 : 0;
     const pad = w <= 700 ? 4 : 16;
@@ -1860,21 +1862,64 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     applyTransform();
   }
 
-  function zoomAt(nextScale, cx, cy) {
-    const clamped = clamp(nextScale, MIN_SCALE, MAX_SCALE);
-    if (clamped === scale) return;
-    const mapX = (cx - offsetX) / scale;
-    const mapY = (cy - offsetY) / scale;
-    scale = clamped;
-    offsetX = cx - mapX * scale;
-    offsetY = cy - mapY * scale;
+  // Zooming eases toward a target rather than jumping, and each step compounds
+  // onto the pending target — so spinning the wheel quickly keeps up instead of
+  // multiplying against a value that is still catching up.
+  let zoomAim = null;
+  let zoomLoop = false;
+
+  function zoomBy(factor, cx, cy) {
+    const from = zoomAim ? zoomAim.target : scale;
+    const target = clamp(from * factor, MIN_SCALE, MAX_SCALE);
+    if (Math.abs(target - scale) < 1e-4) return;
     userAdjustedView = true;
+
+    // The point under the cursor stays under the cursor for the whole glide.
+    const anchor = {
+      target,
+      cx,
+      cy,
+      mapX: (cx - offsetX) / scale,
+      mapY: (cy - offsetY) / scale,
+    };
+    zoomAim = anchor;
+
+    if (reduceMotion) { settleZoom(target); return; }
+    // One loop only: a second wheel event mid-glide must retarget the existing
+    // animation, not start a rival one easing the same value.
+    if (zoomLoop) return;
+    zoomLoop = true;
+    requestAnimationFrame(stepZoom);
+  }
+
+  function settleZoom(value) {
+    scale = value;
+    offsetX = zoomAim.cx - zoomAim.mapX * scale;
+    offsetY = zoomAim.cy - zoomAim.mapY * scale;
+    zoomAim = null;
     requestTransform();
   }
 
+  function stepZoom() {
+    if (!zoomAim) { zoomLoop = false; return; }
+    const remaining = zoomAim.target - scale;
+    if (Math.abs(remaining) < zoomAim.target * 0.003) {
+      settleZoom(zoomAim.target);
+      zoomLoop = false;
+      return;
+    }
+    scale += remaining * 0.34;
+    offsetX = zoomAim.cx - zoomAim.mapX * scale;
+    offsetY = zoomAim.cy - zoomAim.mapY * scale;
+    applyTransform();
+    requestAnimationFrame(stepZoom);
+  }
+
+  const cancelZoom = () => { zoomAim = null; };
+
   function zoomCentre(factor) {
     const { w, h } = viewSize();
-    zoomAt(scale * factor, w / 2, h / 2);
+    zoomBy(factor, w / 2, h / 2);
   }
 
   const toMap = (clientX, clientY) => ({
@@ -2063,6 +2108,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
       document.activeElement.blur();
     }
+    cancelZoom(); // a drag takes the view over from any glide still running
     try { dom.viewport.setPointerCapture(event.pointerId); } catch (error) { /* synthetic pointer */ }
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     pointerMoved = false;
@@ -2347,7 +2393,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   dom.viewport.addEventListener("dblclick", event => {
     if (DRAW_MODES.includes(mode)) { finishDraft(); return; }
     if (!hitTest(event.clientX, event.clientY)?.closest('[data-map-entity="kingdom"]')) {
-      zoomAt(scale * 1.6, event.clientX, event.clientY);
+      zoomBy(2, event.clientX, event.clientY);
     }
   });
 
@@ -2370,7 +2416,13 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       requestTransform();
       return;
     }
-    zoomAt(scale * Math.exp(-dy * 0.00115), event.clientX, event.clientY);
+    // A mouse notch arrives as one big delta and should cover real ground; a
+    // trackpad sends a stream of small ones and needs fine continuous control.
+    const notches = Math.abs(dy) >= 40 ? Math.min(Math.abs(dy) / 100, 3) : 0;
+    const factor = notches
+      ? Math.pow(1.4, notches * (dy < 0 ? 1 : -1))
+      : Math.exp(-dy * 0.0042);
+    zoomBy(factor, event.clientX, event.clientY);
   }, { passive: false });
 
   /* ======================================================== point editing */
@@ -2958,8 +3010,8 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   const fit = () => { userAdjustedView = false; fitMap(); };
   document.getElementById("fitButton").addEventListener("click", fit);
   document.getElementById("navFit").addEventListener("click", fit);
-  document.getElementById("zoomIn").addEventListener("click", () => zoomCentre(1.3));
-  document.getElementById("zoomOut").addEventListener("click", () => zoomCentre(1 / 1.3));
+  document.getElementById("zoomIn").addEventListener("click", () => zoomCentre(1.5));
+  document.getElementById("zoomOut").addEventListener("click", () => zoomCentre(1 / 1.5));
   const toggleFullscreen = () => {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen?.();
@@ -3000,8 +3052,8 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       case "ArrowRight": offsetX -= step; break;
       case "ArrowUp": offsetY += step; break;
       case "ArrowDown": offsetY -= step; break;
-      case "+": case "=": zoomCentre(1.3); return;
-      case "-": case "_": zoomCentre(1 / 1.3); return;
+      case "+": case "=": zoomCentre(1.5); return;
+      case "-": case "_": zoomCentre(1 / 1.5); return;
       case "0": fit(); return;
       case "f": toggleFullscreen(); return;
       case "d": setMode("draw"); return;
@@ -3041,7 +3093,6 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
   /* ====================================================== presentation mode */
 
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   let presenting = false;
   let hoveredKingdomId = null;
 
@@ -3065,6 +3116,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   // Eased camera move. Used for the opening settle and for framing a realm.
   let flight = null;
   function flyTo(target, duration = 900) {
+    cancelZoom();
     if (reduceMotion || duration <= 0) {
       scale = target.scale; offsetX = target.x; offsetY = target.y;
       applyTransform();
