@@ -45,10 +45,11 @@ body { touch-action:none; user-select:none; }
    region every frame the map moves; the panels are near-opaque regardless, so
    it cost a great deal and showed almost nothing. */
 
-/* While the map is moving, drop the per-icon shadows: 94 filtered images are
-   re-rasterised at every zoom step. They come back as soon as it settles. */
-body.interacting .settlement img { filter:none; }
-body.interacting .kingdom-line.halo { display:none; }
+/* Nothing is toggled while the map moves. Dropping the icon shadows and the
+   border halo during a gesture saved a little rasterising, but restoring them
+   240ms after you stopped made 139 icons and every border visibly change —
+   which reads as the map glitching. Coalescing the transform to one write a
+   frame was where the actual win was. */
 button,input,textarea,select { font:inherit; }
 button { color:inherit; }
 
@@ -1953,17 +1954,11 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     const { w, h } = viewSize();
     const sw = MAP_WIDTH * scale;
     const sh = MAP_HEIGHT * scale;
-    offsetX = sw <= w ? (w - sw) / 2 : clamp(offsetX, w - sw, 0);
-    offsetY = sh <= h ? (h - sh) / 2 : clamp(offsetY, h - sh, 0);
-  }
-
-  // Filters and shadows are dropped while the map is moving and restored when
-  // it settles: otherwise every one of them is re-rasterised at each zoom step.
-  let interactionTimer = null;
-  function markInteracting() {
-    document.body.classList.add("interacting");
-    clearTimeout(interactionTimer);
-    interactionTimer = setTimeout(() => document.body.classList.remove("interacting"), 240);
+    // When the map is smaller than the viewport it may still be moved within
+    // the slack. Re-centring it on every frame, as this used to, undid the drag
+    // as fast as it happened and read as the map twitching and snapping back.
+    offsetX = sw <= w ? clamp(offsetX, 0, w - sw) : clamp(offsetX, w - sw, 0);
+    offsetY = sh <= h ? clamp(offsetY, 0, h - sh) : clamp(offsetY, h - sh, 0);
   }
 
   // Wheels and pointers fire faster than the screen refreshes, and every
@@ -1983,9 +1978,10 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     };
     transformFrame = requestAnimationFrame(run);
     // Frames stop in a background tab, and never come at all under a headless
-    // virtual clock. The timer is longer than a frame so it loses the race in a
-    // real browser and only acts as a backstop.
-    transformFallback = setTimeout(run, 32);
+    // virtual clock. Well clear of a slow frame so it never races one: on this
+    // page a frame can exceed 32ms, and a closer timer applied the transform
+    // twice per pointer move.
+    transformFallback = setTimeout(run, 120);
   }
 
   // Panning changes only the transform. Handle sizes, ink width, label fit and
@@ -1995,7 +1991,6 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
   function applyTransform() {
     clampOffsets();
-    markInteracting();
     dom.world.style.transform = `translate(${offsetX}px,${offsetY}px) scale(${scale})`;
     if (lastAppliedScale === scale) return;
     lastAppliedScale = scale;
@@ -2020,6 +2015,10 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     const reserve = w <= 1100 ? 64 : 0;
     const pad = w <= 700 ? 4 : 16;
     scale = Math.min((w - pad * 2) / MAP_WIDTH, (h - reserve - pad * 2) / MAP_HEIGHT);
+    // Centring is explicit now: clampOffsets no longer does it, because doing
+    // it every frame was undoing every drag.
+    offsetX = (w - MAP_WIDTH * scale) / 2;
+    offsetY = (h - MAP_HEIGHT * scale) / 2;
     applyTransform();
   }
 
@@ -2408,7 +2407,6 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       const current = toMap(event.clientX, event.clientY);
       item.x = clamp(current.x, 0, MAP_WIDTH);
       item.y = clamp(current.y, 0, MAP_HEIGHT);
-      markInteracting();
       // Only the dragged icon moves; rewriting all 94 every frame was wasteful.
       const node = settlementNodes.get(item.id);
       if (node) {
@@ -2443,7 +2441,6 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
         y: clamp(drag.anchorPoint.y + (cursor.y - drag.anchorCursor.y) * rate, 0, MAP_HEIGHT),
       };
       if (kingdom.parts[drag.part]) kingdom.parts[drag.part][drag.index] = point;
-      markInteracting();
       render();
       dom.saveState.textContent = `Point ${drag.index + 1} · ${point.x.toFixed(1)}, ${point.y.toFixed(1)}`;
       return;

@@ -250,9 +250,31 @@ frame.addEventListener("load", async () => {
     check("pan still works after clicking a holding",
       doc.getElementById("world").style.transform !== panBefore2);
     doc.getElementById("fitButton").click();
-    await sleep(200);
+    await sleep(300);
+
+    // Panning at the default zoom used to be undone on the same frame, because
+    // a map smaller than the viewport was re-centred every time. It read as the
+    // map twitching and refusing to move.
+    const offsetOf = () => {
+      const m = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(doc.getElementById("world").style.transform);
+      return { x: Number(m[1]), y: Number(m[2]) };
+    };
+    const restAt = offsetOf();
+    strokeAlong(win, viewport, [[640, 400], [610, 386], [580, 372], [548, 356]]);
+    await sleep(300);
+    const movedTo = offsetOf();
+    check("the map moves when dragged at the default zoom",
+      Math.abs(movedTo.x - restAt.x) > 8 || Math.abs(movedTo.y - restAt.y) > 8,
+      `${restAt.x.toFixed(0)},${restAt.y.toFixed(0)} -> ${movedTo.x.toFixed(0)},${movedTo.y.toFixed(0)}`);
+    await sleep(400);
+    const settledAt = offsetOf();
+    check("the map stays where it was dragged, it does not spring back",
+      Math.abs(settledAt.x - movedTo.x) < 1 && Math.abs(settledAt.y - movedTo.y) < 1,
+      `${movedTo.x.toFixed(0)},${movedTo.y.toFixed(0)} -> ${settledAt.x.toFixed(0)},${settledAt.y.toFixed(0)}`);
+    check("nothing is toggled on the map while it moves",
+      !doc.body.classList.contains("interacting"));
     doc.getElementById("fitButton").click();
-    await sleep(150);
+    await sleep(200);
 
     // --- PHASE 3: the detail panel ---------------------------------------
     win.MerovarStage.present();
@@ -509,7 +531,7 @@ frame.addEventListener("load", async () => {
     viewport.dispatchEvent(new win.WheelEvent("wheel", {
       clientX: 600, clientY: 400, deltaY: -600, bubbles: true, cancelable: true,
     }));
-    await sleep(200);
+    await sleep(300);
     const after = doc.querySelector(".kingdom-line.main").getBoundingClientRect().width;
     check("border scales with zoom", after > before * 1.4, `${before.toFixed(0)} -> ${after.toFixed(0)}`);
     const zoomedStroke = parseFloat(win.getComputedStyle(doc.querySelector(".kingdom-line.main")).strokeWidth);
@@ -565,7 +587,7 @@ frame.addEventListener("load", async () => {
 
     const rightBefore = worldOf();
     strokeAlong(win, viewport, [[600, 400], [650, 430], [720, 460]], 2);
-    await sleep(120);
+    await sleep(300);
     check("right-drag pans instead of drawing", worldOf() !== rightBefore);
     check("right-drag creates no kingdom", api.getAllKingdoms().length === countBeforePan);
 
