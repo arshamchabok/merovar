@@ -87,7 +87,7 @@ frame.addEventListener("load", async () => {
     await sleep(400);
 
     // --- structure -------------------------------------------------------
-    check("94 settlements rendered", doc.querySelectorAll(".settlement").length === 94,
+    check("139 settlements rendered", doc.querySelectorAll(".settlement").length === 139,
       String(doc.querySelectorAll(".settlement").length));
     check("map image untouched",
       doc.getElementById("map").getAttribute("src").startsWith("data:image/png;base64,"));
@@ -106,12 +106,89 @@ frame.addEventListener("load", async () => {
      "getSettlementsInsideKingdom"].forEach(fn =>
       check(`API.${fn}`, typeof api?.[fn] === "function"));
     check("MerovarMapAPI still present", typeof win.MerovarMapAPI?.getSettlements === "function");
-    check("settlement manifest has 94",
-      win.MerovarMapAPI.getSettlements().length === 94);
-    check("starts with no kingdoms", api.getAllKingdoms().length === 0);
+    check("settlement manifest has 139",
+      win.MerovarMapAPI.getSettlements().length === 139,
+      String(win.MerovarMapAPI.getSettlements().length));
+    check("starts with the ten drawn realms", api.getAllKingdoms().length === 10,
+      String(api.getAllKingdoms().length));
+
+    // --- PHASE 2: click targets ------------------------------------------
+    const viewport = doc.getElementById("viewport");
+    const marks = [...doc.querySelectorAll('[data-map-entity="settlement"]')];
+    check("every settlement is a button", marks.every(m => m.getAttribute("role") === "button"),
+      `${marks.filter(m => m.getAttribute("role") === "button").length}/${marks.length}`);
+    check("every settlement is focusable", marks.every(m => m.getAttribute("tabindex") === "0"));
+    check("every settlement is labelled", marks.every(m => (m.getAttribute("aria-label") || "").length > 2));
+    const crownford = marks.find(m => m.dataset.settlementName === "Crownford");
+    check("label reads name, type, house",
+      crownford?.getAttribute("aria-label") === "Crownford, city, House Brenn",
+      crownford?.getAttribute("aria-label"));
+
+    // The icon is tiny at a fitted zoom; the hit area must not be.
+    doc.getElementById("fitButton").click();
+    await sleep(200);
+    const hitBox = crownford.getBoundingClientRect();
+    const hitStyle = win.getComputedStyle(crownford, "::before");
+    const hitSize = Math.max(parseFloat(hitStyle.width), parseFloat(hitStyle.height)) *
+      Number(/scale\(([\d.]+)\)/.exec(doc.getElementById("world").style.transform)[1]);
+    check("hit target is about 44px on screen at fit zoom",
+      hitSize >= 40 && hitSize <= 52,
+      `${hitSize.toFixed(1)}px (icon itself is ${hitBox.width.toFixed(1)}px)`);
+    check("hit target is larger than the icon", hitSize > hitBox.width,
+      `${hitSize.toFixed(1)} > ${hitBox.width.toFixed(1)}`);
+
+    const fills = [...doc.querySelectorAll('.kingdom-fill[data-kingdom-id]')];
+    check("every realm is a button", fills.length === 10 && fills.every(f => f.getAttribute("role") === "button"),
+      `${fills.length} realms`);
+    check("every realm is focusable", fills.every(f => f.getAttribute("tabindex") === "0"));
+    check("realm labels name the house and holdings",
+      fills.every(f => /realm/.test(f.getAttribute("aria-label") || "")) &&
+      /holdings/.test(fills[0].getAttribute("aria-label")),
+      fills.find(f => /Crownvale/i.test(f.dataset.kingdomName))?.getAttribute("aria-label"));
+    check("the ink line and the name are not extra tab stops",
+      [...doc.querySelectorAll('.kingdom-line, .kingdom-label')].every(el => !el.hasAttribute("tabindex")));
+
+    // Keyboard activation must reach the same place as a click.
+    let keyFired = null;
+    win.addEventListener("merovar:kingdom-click", e => { keyFired = e.detail; });
+    fills[0].focus();
+    check("a realm can take focus", doc.activeElement === fills[0] ||
+      doc.activeElement?.dataset?.kingdomId === fills[0].dataset.kingdomId);
+    fills[0].dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await sleep(120);
+    check("Enter activates a realm", keyFired?.id === fills[0].dataset.kingdomId,
+      keyFired ? keyFired.name : "no event");
+    keyFired = null;
+    fills[1].dispatchEvent(new win.KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    await sleep(120);
+    check("Space activates a realm", keyFired?.id === fills[1].dataset.kingdomId);
+
+    let settlementKey = null;
+    win.addEventListener("merovar:settlement-click", e => { settlementKey = e.detail; });
+    crownford.focus();
+    crownford.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await sleep(120);
+    check("Enter activates a settlement", settlementKey?.name === "Crownford",
+      settlementKey ? settlementKey.name : "no event");
+
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await sleep(120);
+    check("Escape closes the selection", !win.MerovarKingdomAPI.getAllKingdoms()
+      .some(() => doc.getElementById("inspector") && !doc.getElementById("inspector").classList.contains("hidden")));
+
+    // Pan and zoom still work, and the targets travel with the map.
+    const beforePan = crownford.getBoundingClientRect().left;
+    strokeAlong(win, viewport, [[600, 400], [660, 420], [720, 440]], 1);
+    await sleep(150);
+    check("hit targets share the map transform",
+      Math.abs(crownford.getBoundingClientRect().left - beforePan) > 5 ||
+      doc.getElementById("world").style.transform.includes("translate"),
+      "moved with the map");
+    check("no form elements were introduced", doc.querySelectorAll("form").length === 0);
+    doc.getElementById("fitButton").click();
+    await sleep(150);
 
     // --- draw a kingdom ---------------------------------------------------
-    const viewport = doc.getElementById("viewport");
     doc.querySelector('.tool[data-mode="draw"]').click();
     check("draw mode active", doc.body.classList.contains("mode-draw"));
     // Drag round a rectangle, densely enough to look like a hand tracing it.
@@ -126,22 +203,25 @@ frame.addEventListener("load", async () => {
     strokeAlong(win, viewport, rect.slice(0, -6)); // stops short of the start
     await sleep(120);
     check("unclosed drag leaves a draft, not a kingdom",
-      api.getAllKingdoms().length === 0 && !doc.getElementById("finishButton").disabled);
+      api.getAllKingdoms().length === 10 && !doc.getElementById("finishButton").disabled,
+      String(api.getAllKingdoms().length));
     doc.getElementById("finishButton").click();
     await sleep(120);
 
     const all = api.getAllKingdoms();
-    check("one kingdom created", all.length === 1, String(all.length));
+    check("one kingdom created", all.length === 11, String(all.length));
+    // The traced realm is the newest; the first ten came in with the map.
+    const traced = all.at(-1);
     check("traced rectangle keeps its corners",
-      all[0]?.geometry.pointCount >= 4 && all[0]?.geometry.pointCount <= 14,
-      `${all[0]?.geometry.pointCount} points`);
-    const inBounds = all[0]?.geometry.points.every(p =>
+      traced?.geometry.pointCount >= 4 && traced?.geometry.pointCount <= 14,
+      `${traced?.geometry.pointCount} points`);
+    const inBounds = traced?.geometry.points.every(p =>
       p.x >= 0 && p.x <= 3840 && p.y >= 0 && p.y <= 1645);
     check("points inside 3840x1645 space", inBounds,
-      `${all[0]?.geometry.pointCount} points in bounds`);
+      `${traced?.geometry.pointCount} points in bounds`);
 
     // --- DOM + metadata ----------------------------------------------------
-    const id = all[0].id;
+    const id = traced.id;
     const els = doc.querySelectorAll(`[data-kingdom-id="${id}"]`);
     check("kingdom rendered as fill+border+label", els.length === 3, String(els.length));
     const roles = [...els].map(e => e.dataset.kingdomRole).sort().join(",");
@@ -158,12 +238,12 @@ frame.addEventListener("load", async () => {
     // --- manifest ----------------------------------------------------------
     const manifest = JSON.parse(doc.getElementById("merovarKingdomManifest").textContent);
     check("manifest schema", manifest.schema === "merovar.kingdom-borders.v1");
-    check("manifest lists kingdom", manifest.kingdoms.length === 1);
+    check("manifest lists kingdom", manifest.kingdoms.length === 11);
     check("manifest records every field",
       ["id", "name", "rulingHouse", "capitalSettlementId", "notes", "appearance", "geometry"]
         .every(k => k in manifest.kingdoms[0]));
     check("manifest stores every point",
-      manifest.kingdoms[0].geometry.points.length === all[0].geometry.pointCount);
+      manifest.kingdoms.at(-1).geometry.points.length === traced.geometry.pointCount);
 
     // --- settlements inside -------------------------------------------------
     const inside = api.getSettlementsInsideKingdom(id);
@@ -196,22 +276,22 @@ frame.addEventListener("load", async () => {
     // --- undo / redo -----------------------------------------------------------
     doc.getElementById("undoButton").click();
     await sleep(80);
-    check("undo removes the kingdom", api.getAllKingdoms().length === 0,
+    check("undo removes the kingdom", api.getAllKingdoms().length === 10,
       String(api.getAllKingdoms().length));
     doc.getElementById("redoButton").click();
     await sleep(80);
-    check("redo restores it", api.getAllKingdoms().length === 1);
+    check("redo restores it", api.getAllKingdoms().length === 11);
 
     // --- export ---------------------------------------------------------------
     const exported = JSON.parse(JSON.stringify({
       kingdoms: api.getAllKingdoms(),
     }));
     check("export shape usable",
-      exported.kingdoms[0].geometry.points.length === all[0].geometry.pointCount);
+      exported.kingdoms.at(-1).geometry.points.length === traced.geometry.pointCount);
 
     // --- settlements untouched ---------------------------------------------------
     check("settlement count unchanged after edits",
-      doc.querySelectorAll(".settlement").length === 94);
+      doc.querySelectorAll(".settlement").length === 139);
     const first = doc.querySelector(".settlement");
     check("settlement still positioned by map coords",
       first.style.left.endsWith("px") && first.dataset.mapAnchor === "bottom-center");
@@ -226,7 +306,8 @@ frame.addEventListener("load", async () => {
     nameInput.dispatchEvent(new win.Event("input", { bubbles: true }));
     nameInput.blur();
     await sleep(200);
-    const label = doc.querySelector(".kingdom-label");
+    // Scoped to this test's realm: ten more were on the map before it ran.
+    const label = doc.querySelector(`.kingdom-label[data-kingdom-id="${id}"]`);
     const labelBox = label.getBoundingClientRect();
     const labelStyle = win.getComputedStyle(label);
     check("label text set", label.textContent === "Vareth Dominion", label.textContent);
@@ -237,7 +318,9 @@ frame.addEventListener("load", async () => {
       `top=${labelBox.top.toFixed(0)} left=${labelBox.left.toFixed(0)}`);
 
     // --- ink line visual weight -------------------------------------------
-    const line = doc.querySelector(".kingdom-line.main");
+    const line = doc.querySelector(`[data-kingdom-id="${id}"].kingdom-group .kingdom-line.main`)
+      || [...doc.querySelectorAll(`[data-kingdom-id="${id}"]`)]
+        .flatMap(g => [...g.querySelectorAll(".kingdom-line.main")])[0];
     const lineBox = line.getBoundingClientRect();
     const lineStyle = win.getComputedStyle(line);
     check("ink stroke ~1.7 screen px",
@@ -801,7 +884,7 @@ frame.addEventListener("load", async () => {
     check("settlements autosave to storage",
       !!saved && Array.isArray(saved.settlements) && saved.settlements.length === beforePlace + 1,
       `${saved?.settlements?.length} stored`);
-    check("autosave keeps the original 94 too",
+    check("autosave keeps the original 139 too",
       saved.settlements.filter(s => s.id.startsWith("city-17") || s.id.startsWith("town-17") ||
         s.id.startsWith("castle-17")).length >= 90, `${saved.settlements.length} total`);
 
@@ -859,9 +942,11 @@ frame.addEventListener("load", async () => {
       labels.includes("Population"), labels.join(","));
     check("realm plate totals the soldiers",
       labels.includes("Soldiers"), labels.join(","));
-    check("partial records are marked as partial",
-      values.some(v => /\d+ of \d+/.test(v)) || !labels.includes("Population"),
-      values.join(" | "));
+    const total = Number((values[labels.indexOf("Settlements")] || "0").replace(/\D/g, ""));
+    const surveyed = Number((/(\d+) of (\d+)/.exec(values.join(" ")) || [0, total])[1]);
+    check("a partial survey is marked as partial, a complete one is not",
+      surveyed === total || /\d+ of \d+/.test(values.join(" ")),
+      `${surveyed} of ${total} holdings carry figures`);
     win.MerovarStage.edit();
     await sleep(200);
     api.selectKingdom(realmId);
@@ -879,8 +964,9 @@ frame.addEventListener("load", async () => {
     await sleep(150);
     check("delete removes it", win.MerovarMapAPI.getSettlements().length === beforePlace,
       `${win.MerovarMapAPI.getSettlements().length}`);
-    check("the original 94 are untouched",
-      win.MerovarMapAPI.getSettlements().length === 94);
+    check("the original 139 are untouched",
+      win.MerovarMapAPI.getSettlements().length === 139,
+      String(win.MerovarMapAPI.getSettlements().length));
 
     // --- saving the map as its own file ---------------------------------------
     doc.querySelector('.tool[data-mode="draw"]').click();

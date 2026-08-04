@@ -93,6 +93,27 @@ button { color:inherit; }
   opacity:.985;
 }
 body.locked-settlements .settlement { pointer-events:none; }
+
+/* The icon is drawn at map scale, so at a fitted zoom it is barely a dozen
+   pixels across. The hit target is held at ~44px on screen regardless, which is
+   what makes these usable with a finger. */
+.settlement::before {
+  content:""; position:absolute; left:50%; top:50%;
+  width:max(100%, calc(var(--hit, 44) * 1px));
+  height:max(100%, calc(var(--hit, 44) * 1px));
+  transform:translate(-50%, -50%);
+  border-radius:calc(var(--hit, 44) * .14px);
+}
+.settlement:focus-visible { outline:none; }
+.settlement:focus-visible::before {
+  outline:calc(var(--hit, 44) * .07px) solid #ffe9b4;
+  outline-offset:calc(var(--hit, 44) * .04px);
+  background:rgba(255,233,180,.14);
+}
+.kingdom-fill:focus-visible { outline:none; }
+.kingdom-group.is-focused .kingdom-line.main { opacity:1; }
+.kingdom-group.is-focused .kingdom-line.halo { opacity:.5; }
+.kingdom-fill.is-focused { fill-opacity:.2; }
 .settlement.selected {
   outline:3px dashed rgba(255,239,183,.88); outline-offset:5px; border-radius:6px;
 }
@@ -674,6 +695,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   const LABEL_SCREEN_PX = 17;
   const HANDLE_SCREEN_PX = 6;
   const SNAP_SCREEN_PX = 26;
+  const TOUCH_TARGET_PX = 44;
 
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -1286,6 +1308,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   }
 
   function afterChange(message) {
+    forgetHoldings();
     render();
     updateKingdomManifest();
     syncInspector();
@@ -1359,6 +1382,26 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
     fill.addEventListener("pointerenter", () => setHover(kingdom.id, true));
     fill.addEventListener("pointerleave", () => setHover(kingdom.id, false));
+
+    // The fill carries the keyboard affordance; the ink line and the name are
+    // decoration and would only add tab stops for the same realm.
+    fill.setAttribute("role", "button");
+    fill.setAttribute("tabindex", "0");
+    fill.addEventListener("focus", () => {
+      setHover(kingdom.id, true);
+      fill.classList.add("is-focused");
+      entry.strokeGroup.classList.add("is-focused");
+    });
+    fill.addEventListener("blur", () => {
+      setHover(kingdom.id, false);
+      fill.classList.remove("is-focused");
+      entry.strokeGroup.classList.remove("is-focused");
+    });
+    fill.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      activateKingdom(kingdom.id, "keyboard");
+    });
     return entry;
   }
 
@@ -1395,6 +1438,12 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       entry.fill.setAttribute("d", geometry.main);
       entry.fill.setAttribute("fill", kingdom.fillColor);
       entry.fill.setAttribute("fill-opacity", String(kingdom.fillOpacity));
+      entry.fill.setAttribute("aria-label", [
+        kingdom.name || "Unnamed realm",
+        "realm",
+        kingdom.rulingHouse ? `ruled by ${kingdom.rulingHouse}` : null,
+        `${holdingsCount(kingdom)} holdings`,
+      ].filter(Boolean).join(", "));
       applyKingdomAttributes(entry.fill, kingdom, "fill");
 
       entry.halo.setAttribute("d", geometry.main);
@@ -1602,7 +1651,12 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       el.dataset.clickEvent = "merovar:settlement-click";
       el.setAttribute("role", "button");
       el.setAttribute("tabindex", "0");
-      el.setAttribute("aria-label", `${item.name || capitalize(type)} — ${type}`);
+      // "Crownford, city, House Brenn" — read in the order you would say it.
+      el.setAttribute("aria-label", [
+        item.name || `Unnamed ${type}`,
+        type,
+        item.rulingHouse,
+      ].filter(Boolean).join(", "));
       el.style.left = `${item.x}px`;
       el.style.top = `${item.y}px`;
       el.style.width = `${item.width}px`;
@@ -1691,6 +1745,26 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   }
 
   /* ====================================================== kingdom manifest */
+
+  // Testing 139 settlements against 3,970 border points for every kingdom on
+  // every render is half a million point-in-polygon tests a frame. Counted once
+  // and thrown away whenever either list changes.
+  let insideCounts = null;
+  function holdingsCount(kingdom) {
+    if (!insideCounts) {
+      insideCounts = new Map(kingdoms.map(k => [k.id, 0]));
+      for (const item of settlements) {
+        for (const k of kingdoms) {
+          if (insideKingdom(k, Number(item.x), Number(item.y))) {
+            insideCounts.set(k.id, insideCounts.get(k.id) + 1);
+            break;
+          }
+        }
+      }
+    }
+    return insideCounts.get(kingdom.id) || 0;
+  }
+  const forgetHoldings = () => { insideCounts = null; };
 
   function settlementsInside(kingdom) {
     if (!kingdom.parts.length) return [];
@@ -1846,6 +1920,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     root.setProperty("--k-ink", (INK_SCREEN_PX / scale).toFixed(3));
     root.setProperty("--k-label", (LABEL_SCREEN_PX / scale).toFixed(3));
     root.setProperty("--k-handle", (HANDLE_SCREEN_PX / scale).toFixed(3));
+    root.setProperty("--hit", (TOUCH_TARGET_PX / scale).toFixed(2));
     if (presenting) updateScaleBar();
     // Handle radii are numeric, so they have to be redrawn when the zoom changes.
     if (selectedId && mode !== "move") renderHandles();
@@ -2375,7 +2450,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
     const kingdomEl = target?.closest('[data-map-entity="kingdom"]');
     if (kingdomEl) {
-      selectKingdom(kingdomEl.dataset.kingdomId, "click");
+      activateKingdom(kingdomEl.dataset.kingdomId, "click");
       return;
     }
 
@@ -2489,6 +2564,16 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     return clone(record);
   }
 
+  // One entry point for click, Enter and Space, so the keyboard and the mouse
+  // cannot drift apart. The showcase opens its plate; the editor selects.
+  function activateKingdom(id, source = "api") {
+    if (presenting) {
+      showKingdomPlate(id, true);
+      return byId(id) ? clone(kingdomRecord(byId(id))) : null;
+    }
+    return selectKingdom(id, source);
+  }
+
   function deselect() {
     selectedId = null;
     dom.inspector.classList.add("hidden");
@@ -2542,6 +2627,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   const settlementById = (id) => settlements.find(item => item.id === id) || null;
 
   function afterSettlementChange(message) {
+    forgetHoldings();
     syncSettlements();
     updateSettlementManifest();
     updateKingdomManifest(); // settlement counts inside kingdoms may have moved

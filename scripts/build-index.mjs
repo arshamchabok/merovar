@@ -29,8 +29,34 @@ if (!existsSync(TARGET)) throw new Error('index.html must exist — payloads are
 const current = readFileSync(TARGET, 'utf8').split('\n');
 const mapImg = lineContaining(current, '<img id="map"', 'map image');
 const iconLibrary = lineContaining(current, 'id="iconLibraryData"', 'icon library');
-const settlementData = lineContaining(current, 'id="embeddedSettlementData"', 'settlement data');
-const kingdomData = lineContaining(current, 'id="embeddedKingdomData"', 'kingdom data', false);
+let settlementData = lineContaining(current, 'id="embeddedSettlementData"', 'settlement data');
+let kingdomData = lineContaining(current, 'id="embeddedKingdomData"', 'kingdom data', false);
+
+// --import <merovar-map.html> adopts the settlements and kingdoms from a map
+// saved out of the editor. The artwork is never taken from there — only data.
+const importAt = process.argv.indexOf('--import');
+if (importAt !== -1) {
+  const source = process.argv[importAt + 1];
+  if (!source || !existsSync(source)) throw new Error(`--import needs a readable file, got: ${source}`);
+  const other = readFileSync(source, 'utf8');
+  // Indexed slicing: a lazy regex across ~20 MB backtracks catastrophically.
+  const carve = (id) => {
+    const at = other.indexOf(`id="${id}"`);
+    if (at === -1) throw new Error(`no <script id="${id}"> in ${source}`);
+    const start = other.indexOf('>', at) + 1;
+    const end = other.indexOf('</scr' + 'ipt>', start);
+    return { json: other.slice(start, end), tag: `<script id="${id}" type="application/json">` };
+  };
+  const s = carve('embeddedSettlementData');
+  const k = carve('embeddedKingdomData');
+  const count = (raw, key) => {
+    const parsed = JSON.parse(raw);
+    return (Array.isArray(parsed) ? parsed : parsed[key]).length;
+  };
+  console.log(`importing ${count(s.json, 'settlements')} settlements and ${count(k.json, 'kingdoms')} kingdoms from ${source}`);
+  settlementData = `${s.tag}${s.json}</scr` + `ipt>`;
+  kingdomData = `${k.tag}${k.json}</scr` + `ipt>`;
+}
 
 // Fail before writing rather than emit a broken 19 MB file.
 const icons = jsonOf(iconLibrary);
