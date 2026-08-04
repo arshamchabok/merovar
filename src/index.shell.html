@@ -1806,6 +1806,28 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     interactionTimer = setTimeout(() => document.body.classList.remove("interacting"), 240);
   }
 
+  // Wheels and pointers fire faster than the screen refreshes, and every
+  // transform write re-rasterises a 3840x1645 map. The maths stays immediate —
+  // toMap() and friends read the new values straight away — but the DOM is
+  // touched once per frame instead of once per event.
+  let transformFrame = null;
+  let transformFallback = null;
+  function requestTransform() {
+    if (transformFrame !== null) return;
+    const run = () => {
+      cancelAnimationFrame(transformFrame);
+      clearTimeout(transformFallback);
+      transformFrame = null;
+      transformFallback = null;
+      applyTransform();
+    };
+    transformFrame = requestAnimationFrame(run);
+    // Frames stop in a background tab, and never come at all under a headless
+    // virtual clock. The timer is longer than a frame so it loses the race in a
+    // real browser and only acts as a backstop.
+    transformFallback = setTimeout(run, 32);
+  }
+
   // Panning changes only the transform. Handle sizes, ink width, label fit and
   // the scale bar depend on zoom alone, so doing them per pan frame rebuilt the
   // whole handle layer and forced an SVG text measurement for nothing.
@@ -1847,7 +1869,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     offsetX = cx - mapX * scale;
     offsetY = cy - mapY * scale;
     userAdjustedView = true;
-    applyTransform();
+    requestTransform();
   }
 
   function zoomCentre(factor) {
@@ -2130,7 +2152,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       offsetY = cy - pinch.mapY * scale;
       userAdjustedView = true;
       pointerMoved = true;
-      applyTransform();
+      requestTransform();
       return;
     }
 
@@ -2168,7 +2190,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       offsetX = drag.offsetX + (event.clientX - drag.startX);
       offsetY = drag.offsetY + (event.clientY - drag.startY);
       userAdjustedView = true;
-      applyTransform();
+      requestTransform();
       return;
     }
 
@@ -2331,7 +2353,24 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
   dom.viewport.addEventListener("wheel", event => {
     event.preventDefault();
-    zoomAt(scale * Math.exp(-event.deltaY * 0.00115), event.clientX, event.clientY);
+    // deltaMode 1 is lines and 2 is pages; without this a browser reporting
+    // lines zooms by a few thousandths per notch and feels broken.
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewSize().h : 1;
+    const dx = event.deltaX * unit;
+    const dy = event.deltaY * unit;
+
+    // A trackpad pinch arrives as ctrl+wheel, a sideways swipe as deltaX.
+    // Both should move the map rather than zoom it.
+    const panning = !event.ctrlKey && !event.metaKey &&
+      (event.shiftKey || Math.abs(dx) > Math.abs(dy));
+    if (panning) {
+      offsetX -= dx;
+      offsetY -= dy;
+      userAdjustedView = true;
+      requestTransform();
+      return;
+    }
+    zoomAt(scale * Math.exp(-dy * 0.00115), event.clientX, event.clientY);
   }, { passive: false });
 
   /* ======================================================== point editing */

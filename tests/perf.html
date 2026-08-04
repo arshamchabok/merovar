@@ -48,6 +48,27 @@ frame.addEventListener("load", async () => {
     }
   });
 
+  // A trackpad fires far faster than the screen refreshes; this is the case
+  // that used to force a re-rasterisation per event.
+  time("zoom: 200 trackpad-rate wheel events", () => {
+    for (let i = 0; i < 200; i += 1) {
+      viewport.dispatchEvent(new win.WheelEvent("wheel", {
+        clientX: 640, clientY: 400, deltaY: -4, bubbles: true, cancelable: true }));
+    }
+  });
+  await sleep(200);
+  const worldNow = doc.getElementById("world").style.transform;
+  say(`  zoom reached: ${/scale\(([\d.]+)\)/.exec(worldNow)?.[1]}`);
+
+  time("pan: 200 trackpad swipe events", () => {
+    for (let i = 0; i < 200; i += 1) {
+      viewport.dispatchEvent(new win.WheelEvent("wheel", {
+        clientX: 640, clientY: 400, deltaX: 6, deltaY: 0, bubbles: true, cancelable: true }));
+    }
+  });
+  await sleep(200);
+  say(`  sideways swipe panned: ${doc.getElementById("world").style.transform !== worldNow}`);
+
   // --- drawing at Exact ----------------------------------------------------
   doc.getElementById("drawDetail").value = "1";
   doc.querySelector('.tool[data-mode="draw"]').click();
