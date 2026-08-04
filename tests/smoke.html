@@ -273,6 +273,33 @@ frame.addEventListener("load", async () => {
       `${movedTo.x.toFixed(0)},${movedTo.y.toFixed(0)} -> ${settledAt.x.toFixed(0)},${settledAt.y.toFixed(0)}`);
     check("nothing is toggled on the map while it moves",
       !doc.body.classList.contains("interacting"));
+
+    // The zoom loop must always terminate and always leave a usable scale.
+    // A value it can never reach spins it forever and takes the main thread
+    // with it, which is what freezes the map and every control on it.
+    const scaleNow = () => Number(/scale\(([\d.]+)\)/.exec(doc.getElementById("world").style.transform)[1]);
+    for (let i = 0; i < 60; i += 1) {
+      viewport.dispatchEvent(new win.WheelEvent("wheel", {
+        clientX: 600, clientY: 400, deltaY: 400, bubbles: true, cancelable: true }));
+    }
+    await sleep(400);
+    check("zooming out all the way settles at a usable scale",
+      scaleNow() > 0 && scaleNow() >= 0.08 - 1e-6, scaleNow().toFixed(4));
+    for (let i = 0; i < 60; i += 1) {
+      viewport.dispatchEvent(new win.WheelEvent("wheel", {
+        clientX: 600, clientY: 400, deltaY: -400, bubbles: true, cancelable: true }));
+    }
+    await sleep(400);
+    check("zooming in all the way stops at the ceiling",
+      scaleNow() <= 8 + 1e-6 && Number.isFinite(scaleNow()), scaleNow().toFixed(4));
+    const beforeRecovery = scaleNow();
+    viewport.dispatchEvent(new win.WheelEvent("wheel", {
+      clientX: 600, clientY: 400, deltaY: 400, bubbles: true, cancelable: true }));
+    await sleep(400);
+    check("the view still responds after hitting both limits",
+      scaleNow() < beforeRecovery, `${beforeRecovery.toFixed(3)} -> ${scaleNow().toFixed(3)}`);
+    doc.getElementById("fitButton").click();
+    await sleep(250);
     doc.getElementById("fitButton").click();
     await sleep(200);
 

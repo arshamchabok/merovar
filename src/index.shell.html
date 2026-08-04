@@ -775,6 +775,11 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   const HANDLE_SCREEN_PX = 6;
   const SNAP_SCREEN_PX = 26;
   const TOUCH_TARGET_PX = 44;
+  // A ring with more than a few dozen points, or with segments already shorter
+  // than the resampling interval, is a traced outline: it carries the hand that
+  // drew it and gains nothing from being resampled or double-inked.
+  const DENSE_RING_POINTS = 150;
+  const DENSE_SEGMENT_UNITS = 40;
   const MOUSE_TARGET_PX = 24;
 
   const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -965,7 +970,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     const out = [];
     bezierRing(points).forEach(segment => {
       const length = Math.hypot(segment.p2.x - segment.p1.x, segment.p2.y - segment.p1.y) || 1;
-      const steps = clamp(Math.round(length / 40), 2, 24);
+      const steps = clamp(Math.round(length / 40), 1, 24);
       // Strictly proportional, with no floor: long edges of a rough shape get
       // pen character, while the short edges of a carefully traced coastline
       // stay on the line that was actually drawn.
@@ -1403,6 +1408,16 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
   const pathCache = new Map();
 
+  const averageSegment = (ring) => {
+    if (ring.length < 2) return Infinity;
+    let total = 0;
+    for (let i = 0; i < ring.length; i += 1) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      total += Math.hypot(b.x - a.x, b.y - a.y);
+    }
+    return total / ring.length;
+  };
+
   function geometryFor(kingdom) {
     const signature = `${kingdom.inkCharacter}#` + kingdom.parts
       .map(part => part.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(";"))
@@ -1417,9 +1432,16 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     kingdom.parts.forEach((part, index) => {
       const offset = index * 1319;
       const character = kingdom.inkCharacter;
-      // Two passes with different seeds give the doubled-back look of a pen line.
-      mains.push(smoothClosedPath(roughenPolygon(part, seed + offset, character)));
-      unders.push(smoothClosedPath(roughenPolygon(part, seed + offset + 977, character * 1.4)));
+      // A finely traced ring already carries the hand that drew it. Roughening
+      // it resamples every short segment for wobble too small to see, and a
+      // second pen pass doubles that again — together an eightfold expansion of
+      // the geometry, which is a great deal of curve to rasterise at every zoom.
+      const dense = part.length > DENSE_RING_POINTS ||
+        averageSegment(part) < DENSE_SEGMENT_UNITS;
+      mains.push(smoothClosedPath(dense ? part : roughenPolygon(part, seed + offset, character)));
+      if (!dense) {
+        unders.push(smoothClosedPath(roughenPolygon(part, seed + offset + 977, character * 1.4)));
+      }
     });
     // The name belongs on the biggest landmass, not in the sea between parts.
     // The anchor search is O(grid x edges), so run it on a coarse copy of a
@@ -1990,6 +2012,16 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   let lastAppliedScale = null;
 
   function applyTransform() {
+    // Last line of defence: never write a broken transform, and never leave the
+    // view in a state no gesture can recover from.
+    if (!Number.isFinite(scale) || !Number.isFinite(offsetX) || !Number.isFinite(offsetY)) {
+      zoomAim = null;
+      zoomLoop = false;
+      const { w, h } = viewSize();
+      scale = clamp(Math.min(w / MAP_WIDTH, h / MAP_HEIGHT) || 0.3, MIN_SCALE, MAX_SCALE);
+      offsetX = (w - MAP_WIDTH * scale) / 2;
+      offsetY = (h - MAP_HEIGHT * scale) / 2;
+    }
     clampOffsets();
     dom.world.style.transform = `translate(${offsetX}px,${offsetY}px) scale(${scale})`;
     if (lastAppliedScale === scale) return;
@@ -2014,7 +2046,10 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     const { w, h } = viewSize();
     const reserve = w <= 1100 ? 64 : 0;
     const pad = w <= 700 ? 4 : 16;
-    scale = Math.min((w - pad * 2) / MAP_WIDTH, (h - reserve - pad * 2) / MAP_HEIGHT);
+    // A viewport reported as zero mid-layout would otherwise yield a zero or
+    // negative scale, and every later calculation inherits the nonsense.
+    scale = clamp(Math.min((w - pad * 2) / MAP_WIDTH, (h - reserve - pad * 2) / MAP_HEIGHT),
+      MIN_SCALE, MAX_SCALE);
     // Centring is explicit now: clampOffsets no longer does it, because doing
     // it every frame was undoing every drag.
     offsetX = (w - MAP_WIDTH * scale) / 2;
@@ -2031,6 +2066,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   function zoomBy(factor, cx, cy) {
     const from = zoomAim ? zoomAim.target : scale;
     const target = clamp(from * factor, MIN_SCALE, MAX_SCALE);
+    if (!Number.isFinite(target) || !Number.isFinite(cx) || !Number.isFinite(cy)) return;
     if (Math.abs(target - scale) < 1e-4) return;
     userAdjustedView = true;
 
@@ -2062,6 +2098,14 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
   function stepZoom() {
     if (!zoomAim) { zoomLoop = false; return; }
+    // Without this, one non-finite value spins this loop forever and takes the
+    // whole main thread with it: the map freezes and so does every control.
+    if (!Number.isFinite(zoomAim.target) || !Number.isFinite(scale)) {
+      zoomAim = null;
+      zoomLoop = false;
+      fitMap();
+      return;
+    }
     const remaining = zoomAim.target - scale;
     if (Math.abs(remaining) < zoomAim.target * 0.003) {
       settleZoom(zoomAim.target);
