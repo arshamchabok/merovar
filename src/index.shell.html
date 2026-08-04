@@ -383,34 +383,6 @@ body.presenting .settlement { pointer-events:auto; cursor:default; }
   font:inherit; text-decoration:underline; text-underline-offset:3px;
 }
 
-#plate {
-  position:fixed; z-index:31; right:26px; bottom:34px; width:298px;
-  max-height:calc(100vh - 240px); overflow-y:auto; padding:18px 20px 16px;
-}
-#plate.hidden { display:none; }
-#plate h2 {
-  margin:.2em 0 .1em; font-family:var(--font-display); font-weight:400;
-  font-size:27px; line-height:1.05; letter-spacing:.015em;
-}
-.plate-house { margin:0 0 12px; font-family:var(--font-body); font-style:italic; font-size:13px; color:var(--ink-soft); }
-#plateStats { margin:0; padding:12px 0 0; border-top:1px solid rgba(138,115,80,.4); display:grid; gap:7px; }
-.stat-row { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
-.stat-row dt {
-  font-family:var(--font-data); font-size:10px; letter-spacing:.16em;
-  text-transform:uppercase; color:var(--ink-soft);
-}
-.stat-row dd { margin:0; font-family:var(--font-data); font-size:13px; color:var(--ink); }
-.plate-notes {
-  margin:12px 0 0; padding-top:11px; border-top:1px solid rgba(138,115,80,.4);
-  font-family:var(--font-body); font-size:13px; line-height:1.55; color:var(--ink-soft);
-}
-.plate-notes:empty { display:none; }
-.plate-close {
-  position:absolute; top:8px; right:10px; width:24px; height:24px; padding:0;
-  border:0; background:none; cursor:pointer; color:var(--ink-soft);
-  font-family:var(--font-body); font-size:19px; line-height:1;
-}
-.plate-close:hover { color:var(--ink); }
 
 /* Scale bar and survey figures live in the cartouche, where a map keeps them. */
 #marginalia {
@@ -433,6 +405,99 @@ body.presenting .settlement { pointer-events:auto; cursor:default; }
 #settlementTip.hidden { display:none; }
 #settlementTip b { font-family:var(--font-body); font-size:13px; letter-spacing:.02em; text-transform:none; }
 
+/* ------------------------------------------------------------- lore panel */
+/* A side sheet on wide screens, a bottom sheet on narrow ones. Native
+   <dialog> so the focus trap, Escape and inertness are the browser's job. */
+#lorePanel {
+  padding:0; border:0; background:none; color:var(--ink);
+  max-width:none; max-height:none; width:100%; height:100%; margin:0; inset:0;
+}
+#lorePanel::backdrop { background:rgba(12,8,5,.52); }
+.lore-sheet {
+  position:absolute; top:0; right:0; bottom:0;
+  width:min(430px, 100vw); display:flex; flex-direction:column;
+  border-top:0; border-right:0; border-bottom:0; border-radius:0; overflow:hidden;
+}
+#lorePanel[open] .lore-sheet { animation:lore-in .28s cubic-bezier(.16,.8,.3,1); }
+@keyframes lore-in { from { transform:translateX(24px); opacity:0; } }
+@keyframes lore-up { from { transform:translateY(28px); opacity:0; } }
+@media (prefers-reduced-motion: reduce) {
+  #lorePanel[open] .lore-sheet { animation:none; }
+}
+@media (max-width:700px) {
+  .lore-sheet {
+    top:auto; left:0; right:0; width:auto; height:min(78vh, 620px);
+    border-left:0; border-top:1px solid var(--rule); border-radius:14px 14px 0 0;
+  }
+  #lorePanel[open] .lore-sheet { animation:lore-up .28s cubic-bezier(.16,.8,.3,1); }
+}
+
+.lore-head { position:relative; padding:20px 52px 14px 24px; border-bottom:1px solid rgba(138,115,80,.4); }
+.lore-eyebrow {
+  margin:0; font-family:var(--font-data); font-size:10px; letter-spacing:.32em;
+  text-transform:uppercase; color:var(--ink-soft);
+}
+#loreTitle {
+  margin:.16em 0 .1em; font-family:var(--font-display); font-weight:400;
+  font-size:clamp(26px, 4vw, 34px); line-height:1.04; letter-spacing:.015em;
+}
+.lore-sub { margin:0; font-family:var(--font-body); font-style:italic; font-size:13px; color:var(--ink-soft); }
+.lore-close {
+  position:absolute; top:14px; right:16px; width:34px; height:34px; padding:0;
+  border:1px solid transparent; border-radius:8px; background:none; cursor:pointer;
+  color:var(--ink-soft); font:400 24px/1 var(--font-body);
+}
+.lore-close:hover { color:var(--ink); background:rgba(138,115,80,.14); }
+.lore-close:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+
+.lore-body { padding:16px 24px 26px; overflow-y:auto; flex:1 1 auto; }
+.lore-body:focus { outline:none; }
+.lore-quote {
+  margin:0 0 16px; padding:12px 0 12px 16px; border-left:2px solid var(--gold);
+  font-family:var(--font-display); font-size:19px; font-style:italic; line-height:1.35;
+}
+.lore-banner { margin:-8px 0 18px; font-family:var(--font-body); font-size:13px; color:var(--ink-soft); }
+.lore-figures { margin:0 0 18px; display:grid; gap:7px; }
+.lore-figures div { display:flex; align-items:baseline; justify-content:space-between; gap:14px; }
+.lore-figures dt {
+  font-family:var(--font-data); font-size:10px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--ink-soft);
+}
+.lore-figures dd { margin:0; font-family:var(--font-data); font-size:14px; }
+.lore-prose p { margin:0 0 .9em; font-family:var(--font-body); font-size:14.5px; line-height:1.62; }
+.lore-prose p:last-child { margin-bottom:0; }
+.lore-empty { font-family:var(--font-body); font-style:italic; color:var(--ink-soft); font-size:14px; }
+.lore-link {
+  display:inline-flex; align-items:center; gap:7px; margin-top:18px; padding:9px 14px;
+  border:1px solid var(--rule); border-radius:9px; background:rgba(255,252,244,.5);
+  color:var(--ink); font:400 14px/1 var(--font-body); cursor:pointer;
+}
+.lore-link:hover { background:rgba(255,252,244,.9); }
+.lore-link:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+
+.lore-table { width:100%; border-collapse:collapse; margin-top:6px; }
+.lore-table th { padding:0; text-align:left; border-bottom:1px solid rgba(138,115,80,.5); }
+.lore-table th:last-child { text-align:right; }
+.lore-sort {
+  width:100%; padding:7px 4px; border:0; background:none; cursor:pointer; color:var(--ink-soft);
+  font-family:var(--font-data); font-size:9.5px; letter-spacing:.16em; text-transform:uppercase;
+  text-align:inherit;
+}
+.lore-sort:hover { color:var(--ink); }
+.lore-sort:focus-visible { outline:2px solid var(--gold); outline-offset:-2px; }
+.lore-table th[aria-sort="ascending"] .lore-sort::after { content:" ▲"; font-size:8px; }
+.lore-table th[aria-sort="descending"] .lore-sort::after { content:" ▼"; font-size:8px; }
+.lore-table td { padding:0; border-bottom:1px solid rgba(138,115,80,.22); }
+.holding-row {
+  width:100%; display:flex; align-items:baseline; gap:10px; padding:9px 4px;
+  border:0; background:none; cursor:pointer; text-align:left; color:var(--ink);
+  font-family:var(--font-body); font-size:14px;
+}
+.holding-row:hover { background:rgba(138,115,80,.12); }
+.holding-row:focus-visible { outline:2px solid var(--gold); outline-offset:-2px; }
+.holding-row .holding-name { flex:1 1 auto; }
+.holding-row .holding-meta { font-family:var(--font-data); font-size:11px; color:var(--ink-soft); }
+
 .ghost-button {
   position:fixed; z-index:30; right:26px; bottom:0; padding:9px 15px;
   border:1px solid rgba(233,220,192,.3); border-bottom:0; border-radius:8px 8px 0 0;
@@ -441,7 +506,7 @@ body.presenting .settlement { pointer-events:auto; cursor:default; }
   opacity:0; transition:color .2s ease, border-color .2s ease;
 }
 .ghost-button:hover { color:#f7e7c7; border-color:rgba(233,220,192,.62); }
-body.presenting #plate:not(.hidden) ~ .ghost-button { bottom:auto; top:0; border-radius:0 0 8px 8px; border-bottom:1px solid rgba(233,220,192,.3); border-top:0; }
+body.presenting #lorePanel[open] ~ .ghost-button { bottom:auto; top:0; border-radius:0 0 8px 8px; border-bottom:1px solid rgba(233,220,192,.3); border-top:0; }
 
 /* The opening sequence: the map is laid down, then the borders are inked. */
 body.presenting.intro-done #cartouche,
@@ -467,7 +532,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 @media (max-width:900px) {
   #legend { right:12px; top:12px; width:min(220px, 46vw); max-height:38vh; }
   #cartouche { left:14px; bottom:14px; padding:14px 18px 12px; }
-  #plate { right:12px; left:12px; width:auto; bottom:14px; max-height:44vh; }
+
 }
 
 @media (max-width:1100px) {
@@ -650,16 +715,20 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     </p>
   </aside>
 
-  <section id="plate" class="plate-surface hidden" aria-live="polite">
-    <button id="plateClose" class="plate-close" type="button" aria-label="Close">×</button>
-    <span class="plate-eyebrow">Realm</span>
-    <h2 id="plateName">—</h2>
-    <p id="plateHouse" class="plate-house"></p>
-    <dl id="plateStats"></dl>
-    <p id="plateNotes" class="plate-notes"></p>
-  </section>
 
   <div id="settlementTip" class="plate-surface hidden" role="status"></div>
+
+  <dialog id="lorePanel" aria-labelledby="loreTitle">
+    <article class="lore-sheet plate-surface">
+      <header class="lore-head">
+        <p class="lore-eyebrow" id="loreEyebrow"></p>
+        <h2 id="loreTitle">—</h2>
+        <p class="lore-sub" id="loreSub"></p>
+        <button id="loreClose" class="lore-close" type="button" aria-label="Close">×</button>
+      </header>
+      <div class="lore-body" id="loreBody" tabindex="-1" autofocus></div>
+    </article>
+  </dialog>
   <button id="openEditor" class="ghost-button" type="button">Editor</button>
 </div>
 
@@ -1741,6 +1810,9 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     if (index === -1) return null;
     const record = settlementRecord(settlements[index], index);
     window.dispatchEvent(new CustomEvent("merovar:settlement-click", { detail: { ...clone(record), source } }));
+    if (presenting || mode === "move") {
+      showSettlementPanel(id, source === "keyboard" ? document.activeElement : null);
+    }
     return clone(record);
   }
 
@@ -2566,12 +2638,16 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
   // One entry point for click, Enter and Space, so the keyboard and the mouse
   // cannot drift apart. The showcase opens its plate; the editor selects.
-  function activateKingdom(id, source = "api") {
-    if (presenting) {
-      showKingdomPlate(id, true);
-      return byId(id) ? clone(kingdomRecord(byId(id))) : null;
-    }
-    return selectKingdom(id, source);
+  function activateKingdom(id, source = "api", trigger = null) {
+    const kingdom = byId(id);
+    if (!kingdom) return null;
+    // Editing modes keep the editor's own selection behaviour; everywhere else
+    // an activation means "tell me about this realm".
+    if (!presenting && mode !== "move") return selectKingdom(id, source);
+    window.dispatchEvent(new CustomEvent("merovar:kingdom-click",
+      { detail: { ...clone(kingdomRecord(kingdom)), source } }));
+    showKingdomPanel(id, trigger);
+    return clone(kingdomRecord(kingdom));
   }
 
   function deselect() {
@@ -3186,11 +3262,6 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     root: document.getElementById("stage"),
     legendList: document.getElementById("legendList"),
     legendEmpty: document.getElementById("legendEmpty"),
-    plate: document.getElementById("plate"),
-    plateName: document.getElementById("plateName"),
-    plateHouse: document.getElementById("plateHouse"),
-    plateStats: document.getElementById("plateStats"),
-    plateNotes: document.getElementById("plateNotes"),
     cartoucheLine: document.getElementById("cartoucheLine"),
     surveyLine: document.getElementById("surveyLine"),
     scaleLabel: document.getElementById("scaleLabel"),
@@ -3343,7 +3414,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       count.textContent = String(inside.length);
 
       button.append(swatch, name, count);
-      button.addEventListener("click", () => showKingdomPlate(kingdom.id, true));
+      button.addEventListener("click", () => showKingdomPanel(kingdom.id, button));
       button.addEventListener("pointerenter", () => emphasise(kingdom.id));
       button.addEventListener("pointerleave", () => emphasise(null));
       li.appendChild(button);
@@ -3374,68 +3445,6 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     });
   }
 
-  function showKingdomPlate(id, fly = false) {
-    const kingdom = byId(id);
-    if (!kingdom) return;
-    const { record, inside, counts } = kingdomSummary(kingdom);
-    const capital = settlements.find(item => item.id === kingdom.capitalId);
-
-    stage.plateName.textContent = kingdom.name || "Unnamed realm";
-    stage.plateHouse.textContent = kingdom.rulingHouse ? `House ${kingdom.rulingHouse}` : "";
-    stage.plateHouse.style.display = kingdom.rulingHouse ? "" : "none";
-
-    // Only sum what has actually been recorded, and say so when it is partial.
-    const withPopulation = inside.filter(s => s.population !== null);
-    const withSoldiers = inside.filter(s => s.soldiers !== null);
-    const population = withPopulation.reduce((sum, s) => sum + s.population, 0);
-    const soldiers = withSoldiers.reduce((sum, s) => sum + s.soldiers, 0);
-
-    const rows = [
-      ["Settlements", String(inside.length)],
-      ["Cities", String(counts.city || 0)],
-      ["Towns", String(counts.town || 0)],
-      ["Castles", String(counts.castle || 0)],
-    ];
-    if (withPopulation.length) {
-      rows.push(["Population", withPopulation.length === inside.length
-        ? groupDigits(population)
-        : `${groupDigits(population)} (${withPopulation.length} of ${inside.length})`]);
-    }
-    if (withSoldiers.length) {
-      rows.push(["Soldiers", withSoldiers.length === inside.length
-        ? groupDigits(soldiers)
-        : `${groupDigits(soldiers)} (${withSoldiers.length} of ${inside.length})`]);
-    }
-    rows.push(["Landmasses", String(kingdom.parts.length)]);
-    rows.push(["Area", `${(record.geometry.areaSquareUnits / 1000).toFixed(0)}k sq units`]);
-    if (capital) {
-      const capitalIndex = settlements.filter(s => s.type === capital.type).indexOf(capital) + 1;
-      rows.unshift(["Capital", capital.name || `${capitalize(capital.type)} ${capitalIndex}`]);
-    }
-    stage.plateStats.textContent = "";
-    rows.forEach(([label, value]) => {
-      const row = document.createElement("div");
-      row.className = "stat-row";
-      const dt = document.createElement("dt");
-      dt.textContent = label;
-      const dd = document.createElement("dd");
-      dd.textContent = value;
-      row.append(dt, dd);
-      stage.plateStats.appendChild(row);
-    });
-    stage.plateNotes.textContent = kingdom.notes || "";
-    stage.plate.classList.remove("hidden");
-    emphasise(id);
-    if (fly) flyTo(frameBox(geometryFor(kingdom).box), 1000);
-    window.dispatchEvent(new CustomEvent("merovar:kingdom-click", { detail: { ...clone(record), source: "stage" } }));
-  }
-
-  function hideKingdomPlate() {
-    stage.plate.classList.add("hidden");
-    emphasise(null);
-    flyTo(fitView(), 800);
-  }
-
   function updateScaleBar() {
     // The bar is 74px wide; report what that spans in map units at this zoom.
     const units = Math.round(74 / scale / 50) * 50 || 50;
@@ -3454,7 +3463,6 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       updateScaleBar();
     } else {
       emphasise(null);
-      stage.plate.classList.add("hidden");
       stage.tip.classList.add("hidden");
     }
   }
@@ -3488,7 +3496,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
 
     const kingdomEl = el?.closest('[data-map-entity="kingdom"]');
     const id = kingdomEl?.dataset.kingdomId ?? null;
-    if (id !== hoveredKingdomId && !stage.plate.matches(":not(.hidden)")) emphasise(id);
+    if (id !== hoveredKingdomId) emphasise(id);
   });
 
   dom.viewport.addEventListener("pointerleave", () => {
@@ -3500,17 +3508,306 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     if (!presenting || pointerMoved) return;
     const el = document.elementFromPoint(event.clientX, event.clientY);
     const kingdomEl = el?.closest('[data-map-entity="kingdom"]');
-    if (kingdomEl) { showKingdomPlate(kingdomEl.dataset.kingdomId, true); return; }
-    if (!el?.closest('[data-map-entity="settlement"]')) hideKingdomPlate();
+    if (kingdomEl) { activateKingdom(kingdomEl.dataset.kingdomId, "click"); return; }
+    if (!el?.closest('[data-map-entity="settlement"]')) emphasise(null);
   }, true);
 
   document.getElementById("presentButton").addEventListener("click", () => {
     setPresenting(true);
     playIntro();
   });
-  document.getElementById("plateClose").addEventListener("click", hideKingdomPlate);
   document.getElementById("openEditor").addEventListener("click", () => setPresenting(false));
   document.getElementById("legendEditLink").addEventListener("click", () => setPresenting(false));
+
+  /* =========================================================== lore panel */
+
+  // Fetched once, on the first open. The panel works without it — the map
+  // already knows every name, house and figure — so a missing or unreachable
+  // lore.json costs the prose and nothing else.
+  let lorePromise = null;
+  let lore = null;
+  function loadLore() {
+    if (lorePromise) return lorePromise;
+    lorePromise = fetch(new URL('data/lore.json', location.href))
+      .then(response => (response.ok ? response.json() : Promise.reject(new Error(response.status))))
+      .then(data => {
+        lore = {
+          settlements: new Map(data.settlements.map(s => [s.id, s])),
+          kingdoms: new Map(data.kingdoms.map(k => [k.id, k])),
+        };
+        return lore;
+      })
+      .catch(() => { lore = null; return null; });
+    return lorePromise;
+  }
+
+  const panel = {
+    root: document.getElementById("lorePanel"),
+    eyebrow: document.getElementById("loreEyebrow"),
+    title: document.getElementById("loreTitle"),
+    sub: document.getElementById("loreSub"),
+    body: document.getElementById("loreBody"),
+  };
+  let panelReturnTo = null;
+  let panelSort = { column: "population", direction: "desc" };
+
+  const groupNumber = (n) => (n == null ? "—" : Number(n).toLocaleString("en-GB"));
+
+  // Minimal, safe markdown: blank lines become paragraphs and *runs* become
+  // emphasis. Built as nodes, never as innerHTML.
+  function renderProse(markdown, into) {
+    into.textContent = "";
+    const paragraphs = String(markdown || "").split(/\n{2,}/).map(p => p.replace(/\s*\n\s*/g, " ").trim()).filter(Boolean);
+    for (const text of paragraphs) {
+      const p = document.createElement("p");
+      for (const piece of text.split(/(\*[^*]+\*)/g)) {
+        if (!piece) continue;
+        if (/^\*[^*]+\*$/.test(piece)) {
+          const em = document.createElement("em");
+          em.textContent = piece.slice(1, -1);
+          p.appendChild(em);
+        } else {
+          p.appendChild(document.createTextNode(piece));
+        }
+      }
+      into.appendChild(p);
+    }
+    return paragraphs.length;
+  }
+
+  function figureList(rows) {
+    const dl = document.createElement("dl");
+    dl.className = "lore-figures";
+    for (const [label, value] of rows) {
+      if (value == null) continue;
+      const row = document.createElement("div");
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      row.append(dt, dd);
+      dl.appendChild(row);
+    }
+    return dl;
+  }
+
+  function openPanel(trigger) {
+    // A fresh open from the map sets where focus goes back to; navigating
+    // within the panel passes no trigger and keeps the original.
+    if (trigger) panelReturnTo = trigger;
+    else if (!panelReturnTo) panelReturnTo = document.activeElement;
+    if (!panel.root.open) panel.root.showModal();
+    panel.body.scrollTop = 0;
+    // showModal runs its own focusing steps, which land after any focus() call
+    // made in the same task. Claim focus once those have finished, and fall
+    // back to the close button if the browser will not focus the region.
+    queueMicrotask(() => {
+      panel.body.focus();
+      if (!panel.root.contains(document.activeElement)) {
+        document.getElementById("loreClose").focus();
+      }
+    });
+  }
+
+  function closePanel() {
+    if (panel.root.open) panel.root.close();
+  }
+
+  // Coalesced: browsers throttle rapid history writes, and the URL only needs
+  // to describe where you came to rest, not every panel you passed through.
+  let deepLinkTimer = null;
+  function setDeepLink(params) {
+    clearTimeout(deepLinkTimer);
+    deepLinkTimer = setTimeout(() => writeDeepLink(params), 180);
+  }
+
+  function writeDeepLink(params) {
+    const url = new URL(location.href);
+    url.searchParams.delete("s");
+    url.searchParams.delete("k");
+    for (const [k, v] of Object.entries(params || {})) if (v) url.searchParams.set(k, v);
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    // Browsers throttle rapid history writes, so only write on a real change.
+    if (next === `${location.pathname}${location.search}${location.hash}`) return;
+    history.replaceState(null, "", next);
+  }
+
+  async function showSettlementPanel(id, trigger) {
+    const item = settlementById(id);
+    if (!item) return;
+    await loadLore();
+    const extra = lore?.settlements.get(id) || null;
+    const index = settlements.filter(s => s.type === item.type).indexOf(item) + 1;
+    const realm = extra?.kingdomId ? byId(extra.kingdomId) : kingdoms.find(k => insideKingdom(k, item.x, item.y));
+
+    panel.eyebrow.textContent = capitalize(item.type);
+    panel.title.textContent = item.name || `${capitalize(item.type)} ${index}`;
+    panel.sub.textContent = [item.rulingHouse, realm?.name].filter(Boolean).join(" · ");
+
+    panel.body.textContent = "";
+    if (extra?.words) {
+      const quote = document.createElement("blockquote");
+      quote.className = "lore-quote";
+      quote.textContent = `“${extra.words}”`;
+      panel.body.appendChild(quote);
+    }
+    if (extra?.banner) {
+      const banner = document.createElement("p");
+      banner.className = "lore-banner";
+      banner.textContent = extra.banner;
+      panel.body.appendChild(banner);
+    }
+
+    const ratio = item.population && item.soldiers
+      ? `one sword per ${Math.round(item.population / item.soldiers).toLocaleString("en-GB")} souls`
+      : null;
+    panel.body.appendChild(figureList([
+      ["Ruling house", item.rulingHouse || null],
+      ["Population", item.population != null ? groupNumber(item.population) : null],
+      ["Soldiers", item.soldiers != null ? groupNumber(item.soldiers) : null],
+      ["Ratio", ratio],
+    ]));
+
+    const prose = document.createElement("div");
+    prose.className = "lore-prose";
+    const paragraphs = renderProse(extra?.story || item.notes, prose);
+    if (!paragraphs) {
+      const empty = document.createElement("p");
+      empty.className = "lore-empty";
+      empty.textContent = lore
+        ? "The chronicle records no history for this holding."
+        : "The chronicle could not be loaded, so only the survey figures are shown.";
+      prose.appendChild(empty);
+    }
+    panel.body.appendChild(prose);
+
+    if (realm) {
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = "lore-link";
+      link.textContent = `Read about ${realm.name}`;
+      link.addEventListener("click", () => showKingdomPanel(realm.id));
+      panel.body.appendChild(link);
+    }
+
+    setDeepLink({ s: id });
+    openPanel(trigger);
+  }
+
+  async function showKingdomPanel(id, trigger) {
+    const kingdom = byId(id);
+    if (!kingdom) return;
+    await loadLore();
+    const extra = lore?.kingdoms.get(id) || null;
+    const inside = settlementsInside(kingdom);
+    const capital = settlements.find(s => s.id === kingdom.capitalId);
+
+    panel.eyebrow.textContent = extra?.continent || "Realm";
+    panel.title.textContent = kingdom.name || "Unnamed realm";
+    panel.sub.textContent = kingdom.rulingHouse ? `Ruled by ${kingdom.rulingHouse}` : "";
+
+    panel.body.textContent = "";
+    const population = inside.reduce((sum, s) => sum + (s.population || 0), 0);
+    const soldiers = inside.reduce((sum, s) => sum + (s.soldiers || 0), 0);
+    panel.body.appendChild(figureList([
+      ["Continent", extra?.continent || null],
+      ["Capital", capital ? (capital.name || capitalize(capital.type)) : null],
+      ["Holdings", String(inside.length)],
+      ["Population", groupNumber(population)],
+      ["Soldiers", groupNumber(soldiers)],
+      ["Ratio", population && soldiers ? `one sword per ${Math.round(population / soldiers)} souls` : null],
+    ]));
+
+    if (extra?.intro) {
+      const prose = document.createElement("div");
+      prose.className = "lore-prose";
+      renderProse(extra.intro, prose);
+      panel.body.appendChild(prose);
+    }
+
+    const table = document.createElement("table");
+    table.className = "lore-table";
+    const caption = document.createElement("caption");
+    caption.className = "lore-eyebrow";
+    caption.style.textAlign = "left";
+    caption.style.padding = "18px 0 4px";
+    caption.textContent = `${inside.length} holdings`;
+    table.appendChild(caption);
+
+    const head = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    const columns = [["name", "Holding"], ["type", "Type"], ["population", "Souls"], ["soldiers", "Swords"]];
+    for (const [column, label] of columns) {
+      const th = document.createElement("th");
+      th.scope = "col";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "lore-sort";
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        panelSort = panelSort.column === column
+          ? { column, direction: panelSort.direction === "asc" ? "desc" : "asc" }
+          : { column, direction: column === "name" || column === "type" ? "asc" : "desc" };
+        showKingdomPanel(id);
+      });
+      th.appendChild(button);
+      if (panelSort.column === column) {
+        th.setAttribute("aria-sort", panelSort.direction === "asc" ? "ascending" : "descending");
+      }
+      headRow.appendChild(th);
+    }
+    head.appendChild(headRow);
+    table.appendChild(head);
+
+    const sorted = inside.slice().sort((a, b) => {
+      const column = panelSort.column;
+      const av = column === "name" ? (a.displayName || "") : column === "type" ? a.type : (a[column] ?? -1);
+      const bv = column === "name" ? (b.displayName || "") : column === "type" ? b.type : (b[column] ?? -1);
+      const order = typeof av === "string" ? av.localeCompare(bv) : av - bv;
+      return panelSort.direction === "asc" ? order : -order;
+    });
+
+    const tbody = document.createElement("tbody");
+    for (const holding of sorted) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = columns.length;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "holding-row";
+      button.dataset.holdingId = holding.id;
+      const name = document.createElement("span");
+      name.className = "holding-name";
+      name.textContent = holding.displayName;
+      const meta = document.createElement("span");
+      meta.className = "holding-meta";
+      meta.textContent = `${holding.type} · ${groupNumber(holding.population)}`;
+      button.append(name, meta);
+      button.addEventListener("click", () => showSettlementPanel(holding.id));
+      td.appendChild(button);
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    panel.body.appendChild(table);
+
+    setDeepLink({ k: id });
+    openPanel(trigger);
+  }
+
+  document.getElementById("loreClose").addEventListener("click", closePanel);
+  panel.root.addEventListener("close", () => {
+    // Closing is terminal, so drop any pending write and clear immediately.
+    clearTimeout(deepLinkTimer);
+    writeDeepLink(null);
+    const target = panelReturnTo;
+    panelReturnTo = null;
+    if (target && document.contains(target)) target.focus();
+  });
+  // Clicking the backdrop dismisses, as a sheet should.
+  panel.root.addEventListener("click", event => {
+    if (event.target === panel.root) closePanel();
+  });
 
   /* ================================================================== APIs */
 
@@ -3597,6 +3894,20 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     setPresenting(false);
   }
 
+  // ?s=<settlementId> / ?k=<kingdomId> reopen a panel on load, so a view can be
+  // shared and comes back the same.
+  {
+    const deep = new URLSearchParams(location.search);
+    const wantSettlement = deep.get("s");
+    const wantKingdom = deep.get("k");
+    if (wantSettlement || wantKingdom) {
+      setTimeout(() => {
+        if (wantSettlement && settlementById(wantSettlement)) showSettlementPanel(wantSettlement);
+        else if (wantKingdom && byId(wantKingdom)) showKingdomPanel(wantKingdom);
+      }, 0);
+    }
+  }
+
   window.MerovarFile = Object.freeze({
     html: () => buildStandaloneHtml(),
     save: () => saveAsFile(),
@@ -3606,7 +3917,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   window.MerovarStage = Object.freeze({
     present: () => { setPresenting(true); playIntro(); },
     edit: () => setPresenting(false),
-    focus: id => showKingdomPlate(id, true),
+    focus: (id, trigger) => showKingdomPanel(id, trigger),
     isPresenting: () => presenting,
   });
 })();
