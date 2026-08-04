@@ -7,6 +7,7 @@
   "scripts": {
     "build": "node scripts/build-index.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "perf": "node scripts/perf.mjs",
     "dev": "node scripts/dev-server.mjs",
     "start": "node scripts/dev-server.mjs"
   }

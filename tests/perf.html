@@ -1,0 +1,108 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>pending</title></head>
+<body>
+<iframe id="frame" style="width:1280px;height:800px;border:0"></iframe>
+<pre id="out">running</pre>
+<script>
+try { localStorage.clear(); } catch (e) {}
+const frame = document.getElementById("frame");
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const lines = [];
+const say = (s) => { lines.push(s); document.getElementById("out").textContent = lines.join("\n"); };
+const time = (label, fn) => {
+  const t = performance.now();
+  const r = fn();
+  say(`${label}: ${(performance.now() - t).toFixed(1)}ms`);
+  return r;
+};
+
+const loadStart = performance.now();
+frame.addEventListener("load", async () => {
+  const win = frame.contentWindow, doc = frame.contentDocument;
+  say(`iframe load event: ${(performance.now() - loadStart).toFixed(0)}ms`);
+  await sleep(600);
+  const viewport = doc.getElementById("viewport");
+  say(`settlements in DOM: ${doc.querySelectorAll(".settlement").length}`);
+  say(`total elements: ${doc.querySelectorAll("*").length}`);
+
+  const send = (type, x, y, buttons, extra = {}) =>
+    viewport.dispatchEvent(new win.PointerEvent(type, {
+      clientX: x, clientY: y, bubbles: true, cancelable: true,
+      button: 0, buttons, pointerId: 2, pointerType: "mouse", isPrimary: true, ...extra }));
+
+  // --- panning -------------------------------------------------------------
+  viewport.dispatchEvent(new win.WheelEvent("wheel", {
+    clientX: 640, clientY: 400, deltaY: -600, bubbles: true, cancelable: true }));
+  await sleep(200);
+  time("pan: 100 pointermoves", () => {
+    send("pointerdown", 600, 400, 1);
+    for (let i = 0; i < 100; i += 1) send("pointermove", 600 + i * 2, 400 + (i % 7), 1);
+    send("pointerup", 800, 400, 0);
+  });
+
+  // --- zooming -------------------------------------------------------------
+  time("zoom: 30 wheel events", () => {
+    for (let i = 0; i < 30; i += 1) {
+      viewport.dispatchEvent(new win.WheelEvent("wheel", {
+        clientX: 640, clientY: 400, deltaY: i % 2 ? 120 : -120, bubbles: true, cancelable: true }));
+    }
+  });
+
+  // --- drawing at Exact ----------------------------------------------------
+  doc.getElementById("drawDetail").value = "1";
+  doc.querySelector('.tool[data-mode="draw"]').click();
+  await sleep(100);
+  const path = Array.from({ length: 400 }, (_, i) => {
+    const a = (i / 400) * Math.PI * 2;
+    return [640 + Math.cos(a) * 200, 400 + Math.sin(a) * 150];
+  });
+  time("draw: 400-sample stroke", () => {
+    send("pointerdown", path[0][0], path[0][1], 1);
+    for (const [x, y] of path.slice(1)) send("pointermove", x, y, 1);
+  });
+  const t0 = performance.now();
+  send("pointerup", path[0][0], path[0][1], 0);
+  await sleep(400);
+  say(`draw: close + build = ${(performance.now() - t0).toFixed(0)}ms`);
+  const made = win.MerovarKingdomAPI.getAllKingdoms().at(-1);
+  say(`  resulting points: ${made ? made.geometry.pointCount : "none"}`);
+
+  // --- panning with a kingdom present --------------------------------------
+  doc.querySelector('.tool[data-mode="move"]').click();
+  await sleep(100);
+  time("pan with 1 kingdom: 100 pointermoves", () => {
+    send("pointerdown", 600, 400, 1);
+    for (let i = 0; i < 100; i += 1) send("pointermove", 600 + i * 2, 400 + (i % 7), 1);
+    send("pointerup", 800, 400, 0);
+  });
+
+  // --- dragging a settlement ------------------------------------------------
+  doc.querySelector('.tool[data-mode="settlement"]').click();
+  await sleep(100);
+  const one = doc.querySelector(".settlement");
+  const box = one.getBoundingClientRect();
+  time("drag settlement: 60 pointermoves", () => {
+    send("pointerdown", box.left + box.width / 2, box.bottom - 2, 1);
+    for (let i = 0; i < 60; i += 1) send("pointermove", box.left + i, box.bottom + i / 2, 1);
+    send("pointerup", box.left + 60, box.bottom + 30, 0);
+  });
+
+  // --- selecting a kingdom in the editor -----------------------------------
+  doc.querySelector('.tool[data-mode="edit"]').click();
+  await sleep(100);
+  if (made) {
+    time("select kingdom (handles + manifest)", () => win.MerovarKingdomAPI.selectKingdom(made.id));
+    time("100 pointermoves with handles shown", () => {
+      send("pointerdown", 300, 200, 1);
+      for (let i = 0; i < 100; i += 1) send("pointermove", 300 + i, 200 + (i % 5), 1);
+      send("pointerup", 400, 200, 0);
+    });
+  }
+
+  time("build standalone html", () => win.MerovarFile.html().length);
+  document.title = "done";
+  fetch("/__perf", { method: "POST", body: lines.join("\n") });
+});
+frame.src = "/index.html?edit=1";
+</script>
+</body></html>
