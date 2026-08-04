@@ -97,12 +97,21 @@ body.locked-settlements .settlement { pointer-events:none; }
 /* The icon is drawn at map scale, so at a fitted zoom it is barely a dozen
    pixels across. The hit target is held at ~44px on screen regardless, which is
    what makes these usable with a finger. */
+/* 44px is a *touch* guideline. Applying it to a mouse would carpet the map:
+   139 holdings at a fitted zoom would leave almost nowhere to click that is
+   not a settlement. Fine pointers get a smaller assist instead. */
 .settlement::before {
   content:""; position:absolute; left:50%; top:50%;
-  width:max(100%, calc(var(--hit, 44) * 1px));
-  height:max(100%, calc(var(--hit, 44) * 1px));
+  width:max(100%, calc(var(--hit-fine, 24) * 1px));
+  height:max(100%, calc(var(--hit-fine, 24) * 1px));
   transform:translate(-50%, -50%);
-  border-radius:calc(var(--hit, 44) * .14px);
+  border-radius:calc(var(--hit-fine, 24) * .14px);
+}
+@media (pointer: coarse) {
+  .settlement::before {
+    width:max(100%, calc(var(--hit, 44) * 1px));
+    height:max(100%, calc(var(--hit, 44) * 1px));
+  }
 }
 .settlement:focus-visible { outline:none; }
 .settlement:focus-visible::before {
@@ -765,6 +774,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   const HANDLE_SCREEN_PX = 6;
   const SNAP_SCREEN_PX = 26;
   const TOUCH_TARGET_PX = 44;
+  const MOUSE_TARGET_PX = 24;
 
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -1810,7 +1820,10 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     if (index === -1) return null;
     const record = settlementRecord(settlements[index], index);
     window.dispatchEvent(new CustomEvent("merovar:settlement-click", { detail: { ...clone(record), source } }));
-    if (presenting || mode === "move") {
+    // Only the showcase opens the reading panel. In the editor a modal over the
+    // map would swallow the very next pan or zoom, and with 139 holdings almost
+    // any click on land is within reach of one.
+    if (presenting) {
       showSettlementPanel(id, source === "keyboard" ? document.activeElement : null);
     }
     return clone(record);
@@ -1993,6 +2006,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     root.setProperty("--k-label", (LABEL_SCREEN_PX / scale).toFixed(3));
     root.setProperty("--k-handle", (HANDLE_SCREEN_PX / scale).toFixed(3));
     root.setProperty("--hit", (TOUCH_TARGET_PX / scale).toFixed(2));
+    root.setProperty("--hit-fine", (MOUSE_TARGET_PX / scale).toFixed(2));
     if (presenting) updateScaleBar();
     // Handle radii are numeric, so they have to be redrawn when the zoom changes.
     if (selectedId && mode !== "move") renderHandles();
@@ -2643,7 +2657,7 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
     if (!kingdom) return null;
     // Editing modes keep the editor's own selection behaviour; everywhere else
     // an activation means "tell me about this realm".
-    if (!presenting && mode !== "move") return selectKingdom(id, source);
+    if (!presenting) return selectKingdom(id, source);
     window.dispatchEvent(new CustomEvent("merovar:kingdom-click",
       { detail: { ...clone(kingdomRecord(kingdom)), source } }));
     showKingdomPanel(id, trigger);

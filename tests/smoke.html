@@ -139,8 +139,8 @@ frame.addEventListener("load", async () => {
     const hitStyle = win.getComputedStyle(crownford, "::before");
     const hitSize = Math.max(parseFloat(hitStyle.width), parseFloat(hitStyle.height)) *
       Number(/scale\(([\d.]+)\)/.exec(doc.getElementById("world").style.transform)[1]);
-    check("hit target is about 44px on screen at fit zoom",
-      hitSize >= 40 && hitSize <= 52,
+    check("hit target is about 24px for a mouse, 44px for touch",
+      hitSize >= 20 && hitSize <= 28,
       `${hitSize.toFixed(1)}px (icon itself is ${hitBox.width.toFixed(1)}px)`);
     check("hit target is larger than the icon", hitSize > hitBox.width,
       `${hitSize.toFixed(1)} > ${hitBox.width.toFixed(1)}`);
@@ -175,6 +175,10 @@ frame.addEventListener("load", async () => {
     doc.getElementById("lorePanel").close();
     await sleep(120);
 
+    // The reading panel belongs to the showcase, so the checks for it run there.
+    win.MerovarStage.present();
+    await sleep(500);
+
     let settlementKey = null;
     win.addEventListener("merovar:settlement-click", e => { settlementKey = e.detail; });
     crownford.focus();
@@ -183,7 +187,7 @@ frame.addEventListener("load", async () => {
     check("Enter activates a settlement", settlementKey?.name === "Crownford",
       settlementKey ? settlementKey.name : "no event");
 
-    // Activating in Move Map mode opens the modal detail panel, which makes the
+    // Activating in the showcase opens the modal detail panel, which makes the
     // map inert; a synthetic Escape on window will not dismiss a native dialog.
     const panelEl = doc.getElementById("lorePanel");
     check("activating a settlement opens the detail panel", panelEl.open);
@@ -223,10 +227,36 @@ frame.addEventListener("load", async () => {
       doc.getElementById("world").style.transform.includes("translate"),
       "moved with the map");
     check("no form elements were introduced", doc.querySelectorAll("form").length === 0);
+
+    // The bug that shipped in phase 3: clicking a holding in the editor opened
+    // a modal, which made the map inert and killed pan and zoom.
+    win.MerovarStage.edit();
+    await sleep(300);
+    const scaleOf = () => Number(/scale\(([\d.]+)\)/.exec(doc.getElementById("world").style.transform)[1]);
+    const boxNow = crownford.getBoundingClientRect();
+    clickAt(win, viewport, boxNow.left + boxNow.width / 2, boxNow.bottom - 2);
+    await sleep(250);
+    check("clicking a holding in the editor opens no modal",
+      !doc.getElementById("lorePanel").open);
+    const zoomBefore = scaleOf();
+    viewport.dispatchEvent(new win.WheelEvent("wheel", {
+      clientX: 600, clientY: 400, deltaY: -300, bubbles: true, cancelable: true }));
+    await sleep(250);
+    check("zoom still works after clicking a holding", scaleOf() > zoomBefore,
+      `${zoomBefore.toFixed(3)} -> ${scaleOf().toFixed(3)}`);
+    const panBefore2 = doc.getElementById("world").style.transform;
+    strokeAlong(win, viewport, [[500, 300], [560, 340], [620, 380]]);
+    await sleep(250);
+    check("pan still works after clicking a holding",
+      doc.getElementById("world").style.transform !== panBefore2);
+    doc.getElementById("fitButton").click();
+    await sleep(200);
     doc.getElementById("fitButton").click();
     await sleep(150);
 
     // --- PHASE 3: the detail panel ---------------------------------------
+    win.MerovarStage.present();
+    await sleep(500);
     const openPanelFor = async (el) => {
       el.focus();
       el.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -301,6 +331,8 @@ frame.addEventListener("load", async () => {
 
     doc.getElementById("lorePanel").close();
     await sleep(400);
+    win.MerovarStage.edit();
+    await sleep(300);
     if (!win.location.search.includes("s=")) {
       check("the deep link clears after repeated navigation", true, win.location.search);
     } else {
