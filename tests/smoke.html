@@ -80,6 +80,11 @@ function clickAt(win, el, x, y) {
   }
 }
 
+function makeFinderKey(win, doc) {
+  return (key) => (doc.activeElement || doc.body).dispatchEvent(
+    new win.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+}
+
 frame.addEventListener("load", async () => {
   const win = frame.contentWindow;
   const doc = frame.contentDocument;
@@ -89,6 +94,7 @@ frame.addEventListener("load", async () => {
   // A native dialog stalls headless virtual time, so answer them in code.
   win.confirm = () => true;
   let crownfordId = null; // needed again by the entry-point checks further down
+  const finderKey = makeFinderKey(win, doc);
 
   try {
     await sleep(400);
@@ -1233,6 +1239,128 @@ frame.addEventListener("load", async () => {
     api.selectKingdom(savedRealm.id);
     doc.getElementById("deleteButton").click();
     await sleep(150);
+
+    // --- PHASE 4: search and filter ---------------------------------------
+    win.MerovarStage.present();
+    await sleep(700);
+    const q = doc.getElementById("finderQuery");
+    const countLine = () => doc.getElementById("finderCount").textContent;
+    const hits = () => [...doc.querySelectorAll(".finder-hit")];
+    const typeAndWait = async (text) => {
+      q.value = text;
+      q.dispatchEvent(new win.Event("input", { bubbles: true }));
+      await sleep(450);
+    };
+
+    check("the finder is a search landmark",
+      doc.getElementById("finder").getAttribute("role") === "search");
+    check("the search field is labelled",
+      !!doc.querySelector('label[for="finderQuery"]'));
+    check("count shows the whole survey before filtering",
+      /139 holdings/.test(countLine()), countLine());
+
+    await typeAndWait("crown");
+    check("search matches on name", hits().some(h => /Crownford/.test(h.textContent)),
+      hits().slice(0, 3).map(h => h.textContent).join(" | "));
+    check("result count is reported", /of 139 holdings/.test(countLine()), countLine());
+
+    await typeAndWait("brenn");
+    check("search matches on house", hits().some(h => /Crownford/.test(h.textContent)),
+      countLine());
+
+    await typeAndWait("all rivers run here");
+    check("search matches on house words",
+      hits().length > 0 && /Crownford/.test(hits()[0].textContent),
+      hits().map(h => h.textContent).join(" | ") || "no hits");
+
+    // The map must show the shape of the result, not hide the rest of it.
+    const dimmed = [...doc.querySelectorAll(".settlement.unmatched")].length;
+    const lit = [...doc.querySelectorAll(".settlement.matched")].length;
+    check("matching holdings are marked and the rest dimmed",
+      lit >= 1 && dimmed > 100, `${lit} matched, ${dimmed} dimmed`);
+    check("dimmed holdings are still on the map, not removed",
+      doc.querySelectorAll(".settlement").length === 139 &&
+      win.getComputedStyle(doc.querySelector(".settlement.unmatched")).display !== "none");
+
+    // Debounce: typing rapidly must not re-render per keystroke.
+    q.value = "a"; q.dispatchEvent(new win.Event("input", { bubbles: true }));
+    q.value = "am"; q.dispatchEvent(new win.Event("input", { bubbles: true }));
+    q.value = "amb"; q.dispatchEvent(new win.Event("input", { bubbles: true }));
+    const immediately = countLine();
+    await sleep(450);
+    check("the search is debounced", immediately !== countLine() || hits().length > 0,
+      `during typing "${immediately}" then "${countLine()}"`);
+
+    // Empty state.
+    await typeAndWait("zzzznotathing");
+    check("no results shows an empty state",
+      !doc.getElementById("finderEmpty").classList.contains("hidden") &&
+      /zzzznotathing/.test(doc.getElementById("finderEmpty").textContent),
+      doc.getElementById("finderEmpty").textContent);
+    check("no results hides the list", doc.getElementById("finderResults").classList.contains("hidden"));
+
+    // Type filter.
+    await typeAndWait("");
+    doc.querySelector('.finder-chip[data-type="city"]').click();
+    await sleep(250);
+    check("type filter is a pressed toggle",
+      doc.querySelector('.finder-chip[data-type="city"]').getAttribute("aria-pressed") === "true");
+    check("type filter narrows to cities", /15 of 139/.test(countLine()), countLine());
+    doc.querySelector('.finder-chip[data-type="castle"]').click();
+    await sleep(250);
+    check("type filters combine", /74 of 139/.test(countLine()), countLine());
+    doc.querySelector('.finder-chip[data-type="city"]').click();
+    doc.querySelector('.finder-chip[data-type="castle"]').click();
+    await sleep(250);
+
+    // Continent filter, which needs the chronicle.
+    const continentSelect = doc.getElementById("finderContinent");
+    check("continents offered from the chronicle", continentSelect.options.length >= 6,
+      `${continentSelect.options.length} options`);
+    continentSelect.value = "Merovar";
+    continentSelect.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await sleep(250);
+    check("continent filter narrows the survey",
+      /of 139 holdings/.test(countLine()) && !/139 of 139/.test(countLine()), countLine());
+    continentSelect.value = "";
+    continentSelect.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await sleep(250);
+
+    // Keyboard: arrows walk the results, Enter opens one.
+    await typeAndWait("crown");
+    q.focus();
+    finderKey("ArrowDown");
+    check("ArrowDown moves into the results", doc.activeElement?.classList.contains("finder-hit"),
+      doc.activeElement?.className);
+    const firstHit = doc.activeElement;
+    finderKey("ArrowDown");
+    check("ArrowDown walks down the list", doc.activeElement !== firstHit);
+    finderKey("ArrowUp");
+    check("ArrowUp walks back", doc.activeElement === firstHit);
+    check("only one result is in the tab order",
+      hits().filter(h => h.tabIndex === 0).length === 1);
+    finderKey("ArrowUp");
+    check("ArrowUp from the top returns to the field", doc.activeElement === q);
+
+    doc.activeElement.blur();
+    hits()[0].click();
+    await sleep(450);
+    check("a result opens the holding",
+      doc.getElementById("lorePanel").open && /Crown/.test(doc.getElementById("loreTitle").textContent),
+      doc.getElementById("loreTitle").textContent);
+    doc.getElementById("lorePanel").close();
+    await sleep(250);
+
+    await typeAndWait("");
+    check("clearing the search restores every holding",
+      !doc.body.classList.contains("filtering") &&
+      doc.querySelectorAll(".settlement.unmatched").length === 0);
+
+    win.MerovarStage.edit();
+    await sleep(300);
+    check("leaving the showcase leaves no holding dimmed",
+      doc.querySelectorAll(".settlement.unmatched").length === 0 &&
+      !doc.body.classList.contains("filtering"));
 
     // --- the showcase -----------------------------------------------------
     doc.getElementById("fitButton").click();

@@ -415,6 +415,92 @@ body.presenting .settlement { pointer-events:auto; cursor:default; }
 #settlementTip.hidden { display:none; }
 #settlementTip b { font-family:var(--font-body); font-size:13px; letter-spacing:.02em; text-transform:none; }
 
+/* ----------------------------------------------------------------- finder */
+#finder {
+  position:fixed; z-index:30; left:26px; top:26px; width:288px;
+  padding:16px 16px 12px; display:flex; flex-direction:column; gap:10px;
+  opacity:0; transform:translateY(-12px);
+}
+body.presenting.intro-done #finder {
+  opacity:1; transform:none;
+  transition:opacity .9s ease, transform .9s cubic-bezier(.16,.8,.3,1);
+}
+@media (prefers-reduced-motion: reduce) {
+  body.presenting.intro-done #finder { transition:none; }
+}
+.finder-label {
+  font-family:var(--font-data); font-size:10px; letter-spacing:.32em;
+  text-transform:uppercase; color:var(--ink-soft);
+}
+#finderQuery {
+  width:100%; padding:9px 11px; border:1px solid var(--rule); border-radius:8px;
+  background:rgba(255,252,244,.62); color:var(--ink);
+  font:400 15px/1.2 var(--font-body);
+}
+#finderQuery::placeholder { color:rgba(92,70,48,.62); }
+#finderQuery:focus-visible { outline:2px solid var(--gold); outline-offset:1px; }
+.finder-filters { display:flex; flex-direction:column; gap:8px; }
+.finder-types { display:flex; gap:6px; }
+.finder-chip {
+  flex:1 1 auto; padding:6px 4px; border:1px solid var(--rule); border-radius:7px;
+  background:rgba(255,252,244,.4); color:var(--ink-soft); cursor:pointer;
+  font-family:var(--font-data); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase;
+}
+.finder-chip:hover { background:rgba(255,252,244,.8); color:var(--ink); }
+.finder-chip[aria-pressed="true"] {
+  background:var(--gold); border-color:var(--gold); color:#241804;
+}
+.finder-chip:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+.finder-continent { display:flex; align-items:center; gap:8px; }
+.finder-continent span {
+  font-family:var(--font-data); font-size:9.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--ink-soft);
+}
+#finderContinent {
+  flex:1 1 auto; padding:6px 8px; border:1px solid var(--rule); border-radius:7px;
+  background:rgba(255,252,244,.5); color:var(--ink); font:400 13px var(--font-body);
+}
+#finderContinent:focus-visible { outline:2px solid var(--gold); outline-offset:1px; }
+.finder-count {
+  margin:0; font-family:var(--font-data); font-size:10px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--ink-soft);
+}
+.finder-results {
+  margin:0; padding:0; list-style:none; max-height:min(38vh, 320px); overflow-y:auto;
+}
+.finder-results li + li { border-top:1px solid rgba(138,115,80,.28); }
+.finder-hit {
+  width:100%; display:flex; align-items:baseline; gap:9px; padding:8px 3px;
+  border:0; background:none; cursor:pointer; text-align:left; color:var(--ink);
+  font:400 14px var(--font-body);
+}
+.finder-hit:hover, .finder-hit:focus-visible { background:rgba(138,115,80,.14); }
+.finder-hit:focus-visible { outline:2px solid var(--gold); outline-offset:-2px; }
+.finder-hit .hit-name { flex:1 1 auto; }
+.finder-hit .hit-meta {
+  font-family:var(--font-data); font-size:10px; letter-spacing:.06em; color:var(--ink-soft);
+}
+.finder-empty {
+  margin:0; font-family:var(--font-body); font-style:italic; font-size:13px;
+  line-height:1.5; color:var(--ink-soft);
+}
+.finder-empty.hidden, .finder-results.hidden { display:none; }
+
+/* Non-matching holdings recede rather than vanish, so the shape of the
+   result stays readable against the whole map. */
+body.filtering .settlement { transition:opacity .18s ease; }
+body.filtering .settlement.unmatched { opacity:.18; }
+body.filtering .settlement.matched img {
+  filter:drop-shadow(0 0 5px rgba(255,231,163,.95)) drop-shadow(0 2px 1.5px rgba(55,35,19,.3));
+}
+@media (prefers-reduced-motion: reduce) {
+  body.filtering .settlement { transition:none; }
+}
+@media (max-width:900px) {
+  #finder { left:12px; top:12px; width:min(240px, 52vw); }
+  .finder-results { max-height:26vh; }
+}
+
 /* ------------------------------------------------------------- lore panel */
 /* A side sheet on wide screens, a bottom sheet on narrow ones. Native
    <dialog> so the focus trap, Escape and inertness are the browser's job. */
@@ -716,6 +802,26 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       </div>
     </figcaption>
   </figure>
+
+  <div id="finder" class="plate-surface" role="search" aria-label="Find a holding">
+    <label class="finder-label" for="finderQuery">Search the survey</label>
+    <input id="finderQuery" type="search" autocomplete="off" spellcheck="false"
+           placeholder="Name, house, or words" aria-describedby="finderCount">
+    <div class="finder-filters">
+      <div class="finder-types" role="group" aria-label="Filter by type">
+        <button class="finder-chip" type="button" data-type="city" aria-pressed="false">Cities</button>
+        <button class="finder-chip" type="button" data-type="town" aria-pressed="false">Towns</button>
+        <button class="finder-chip" type="button" data-type="castle" aria-pressed="false">Castles</button>
+      </div>
+      <label class="finder-continent">
+        <span>Continent</span>
+        <select id="finderContinent"><option value="">All</option></select>
+      </label>
+    </div>
+    <p id="finderCount" class="finder-count" role="status" aria-live="polite"></p>
+    <ul id="finderResults" class="finder-results"></ul>
+    <p id="finderEmpty" class="finder-empty hidden"></p>
+  </div>
 
   <aside id="legend" class="plate-surface" aria-label="Kingdoms">
     <h2>Realms</h2>
@@ -3516,9 +3622,15 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
       deselectSettlement();
       renderLegend();
       updateScaleBar();
+      loadLore().then(() => { buildSearchIndex(); applyFinder(); });
     } else {
       emphasise(null);
       stage.tip.classList.add("hidden");
+      // Leaving the showcase must not leave holdings dimmed on the map.
+      document.body.classList.remove("filtering");
+      settlementNodes.forEach(entry => {
+        entry.el.classList.remove("matched", "unmatched");
+      });
     }
   }
 
@@ -3573,6 +3685,175 @@ body.presenting .kingdom-group.lifted .kingdom-line.halo { opacity:.42; }
   });
   document.getElementById("openEditor").addEventListener("click", () => setPresenting(false));
   document.getElementById("legendEditLink").addEventListener("click", () => setPresenting(false));
+
+  /* =============================================================== finder */
+
+  const finder = {
+    root: document.getElementById("finder"),
+    query: document.getElementById("finderQuery"),
+    continent: document.getElementById("finderContinent"),
+    count: document.getElementById("finderCount"),
+    results: document.getElementById("finderResults"),
+    empty: document.getElementById("finderEmpty"),
+    chips: [...document.querySelectorAll(".finder-chip")],
+  };
+  let searchIndex = [];
+  let activeTypes = new Set();
+  const MAX_RESULTS = 40;
+
+  const fold = (value) => (value || "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9 ]/g, "");
+
+  // Built once the lore is in hand. Words and continent come from the
+  // chronicle; everything else the map already knows.
+  function buildSearchIndex() {
+    searchIndex = settlements.map((item, i) => {
+      const extra = lore?.settlements.get(item.id) || null;
+      const realm = kingdoms.find(k => insideKingdom(k, item.x, item.y));
+      const name = item.name || `${capitalize(item.type)} ${i + 1}`;
+      return {
+        id: item.id,
+        name,
+        type: item.type,
+        house: item.rulingHouse || "",
+        words: extra?.words || "",
+        continent: extra?.continent || "",
+        realm: realm?.name || "",
+        haystack: fold([name, item.rulingHouse, extra?.words].filter(Boolean).join(" ")),
+      };
+    });
+
+    const continents = [...new Set(searchIndex.map(s => s.continent).filter(Boolean))].sort();
+    finder.continent.innerHTML = '<option value="">All</option>';
+    for (const name of continents) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      finder.continent.appendChild(option);
+    }
+    finder.continent.disabled = continents.length === 0;
+  }
+
+  function currentMatches() {
+    const needle = fold(finder.query.value.trim());
+    const continent = finder.continent.value;
+    return searchIndex.filter(entry =>
+      (!needle || entry.haystack.includes(needle)) &&
+      (activeTypes.size === 0 || activeTypes.has(entry.type)) &&
+      (!continent || entry.continent === continent));
+  }
+
+  const filtersActive = () =>
+    finder.query.value.trim() !== "" || activeTypes.size > 0 || finder.continent.value !== "";
+
+  function paintMatches(matches) {
+    const active = filtersActive();
+    document.body.classList.toggle("filtering", active);
+    const hit = new Set(matches.map(m => m.id));
+    settlementNodes.forEach((entry, id) => {
+      entry.el.classList.toggle("matched", active && hit.has(id));
+      entry.el.classList.toggle("unmatched", active && !hit.has(id));
+    });
+  }
+
+  function renderResults(matches) {
+    finder.results.textContent = "";
+    const shown = matches.slice(0, MAX_RESULTS);
+    for (const entry of shown) {
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "finder-hit";
+      button.dataset.hitId = entry.id;
+      button.tabIndex = -1;
+      const name = document.createElement("span");
+      name.className = "hit-name";
+      name.textContent = entry.name;
+      const meta = document.createElement("span");
+      meta.className = "hit-meta";
+      meta.textContent = [entry.type, entry.house].filter(Boolean).join(" · ");
+      button.append(name, meta);
+      button.addEventListener("click", () => showSettlementPanel(entry.id, button));
+      li.appendChild(button);
+      finder.results.appendChild(li);
+    }
+    const first = finder.results.querySelector(".finder-hit");
+    if (first) first.tabIndex = 0;
+
+    const total = settlements.length;
+    if (!filtersActive()) {
+      finder.count.textContent = `${total} holdings`;
+    } else {
+      finder.count.textContent = `${matches.length} of ${total} holdings` +
+        (matches.length > shown.length ? ` · showing ${shown.length}` : "");
+    }
+
+    const nothing = matches.length === 0;
+    finder.results.classList.toggle("hidden", nothing);
+    finder.empty.classList.toggle("hidden", !nothing);
+    if (nothing) {
+      const term = finder.query.value.trim();
+      finder.empty.textContent = term
+        ? `Nothing in the survey matches “${term}”. Try a holding, a house, or a house's words.`
+        : "No holdings match these filters.";
+    }
+  }
+
+  function applyFinder() {
+    const matches = currentMatches();
+    renderResults(matches);
+    paintMatches(matches);
+  }
+
+  let finderTimer = null;
+  finder.query.addEventListener("input", () => {
+    clearTimeout(finderTimer);
+    finderTimer = setTimeout(applyFinder, 180);
+  });
+  finder.continent.addEventListener("change", applyFinder);
+  finder.chips.forEach(chip => {
+    chip.addEventListener("click", () => {
+      const type = chip.dataset.type;
+      if (activeTypes.has(type)) activeTypes.delete(type);
+      else activeTypes.add(type);
+      chip.setAttribute("aria-pressed", String(activeTypes.has(type)));
+      applyFinder();
+    });
+  });
+
+  // Arrow keys walk the results with a roving tabindex; Escape steps back out.
+  function focusResult(index) {
+    const hits = [...finder.results.querySelectorAll(".finder-hit")];
+    if (!hits.length) return;
+    const next = hits[clamp(index, 0, hits.length - 1)];
+    hits.forEach(hit => { hit.tabIndex = hit === next ? 0 : -1; });
+    next.focus();
+  }
+
+  finder.root.addEventListener("keydown", event => {
+    const hits = [...finder.results.querySelectorAll(".finder-hit")];
+    const at = hits.indexOf(document.activeElement);
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusResult(at === -1 ? 0 : at + 1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (at <= 0) finder.query.focus();
+      else focusResult(at - 1);
+    } else if (event.key === "Home" && at !== -1) {
+      event.preventDefault();
+      focusResult(0);
+    } else if (event.key === "End" && at !== -1) {
+      event.preventDefault();
+      focusResult(hits.length - 1);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      if (finder.query.value) {
+        finder.query.value = "";
+        applyFinder();
+      }
+      finder.query.focus();
+    }
+  });
 
   /* =========================================================== lore panel */
 
